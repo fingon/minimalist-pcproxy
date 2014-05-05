@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Mon May  5 23:00:05 2014 mstenber
- * Edit time:     80 min
+ * Last modified: Mon May  5 23:45:28 2014 mstenber
+ * Edit time:     97 min
  *
  */
 
@@ -29,6 +29,7 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 
+#include "shared.h"
 #include "pcp.h"
 #include "proxy.h"
 
@@ -100,12 +101,18 @@ void fd_callback(struct uloop_fd *u, unsigned int events)
       return;
     }
   if (srcsa.sin6_family != AF_INET6)
-    return;
-  if (ntohs(srcsa.sin6_port) !=
-      (u == &client_fd ? PCP_SERVER_PORT : PCP_CLIENT_PORT))
-    return;
+    {
+      DEBUG("got non-AF_INET6 packet");
+      return;
+    }
+  uint16_t port = ntohs(srcsa.sin6_port);
+  if (port != (u == &client_fd ? PCP_SERVER_PORT : PCP_CLIENT_PORT))
+    {
+      DEBUG("wrong source port: %d", port);
+      return;
+    }
   struct cmsghdr *h;
-  for (h = CMSG_FIRSTHDR(&msg); h ;
+  for (h = CMSG_FIRSTHDR(&msg); h;
        h = CMSG_NXTHDR(&msg, h))
     if (h->cmsg_level == IPPROTO_IPV6
         && h->cmsg_type == IPV6_PKTINFO)
@@ -203,6 +210,15 @@ void proxy_send_to_server(struct in6_addr *src,
                       data2, data_len2);
 }
 
+static void do_help(const char *p, const char *reason)
+{
+  if (reason)
+    printf("%s.\n\n", reason);
+  printf("Usage: %s S [S [S ..]]\n", p);
+  printf(" Where S = <source prefix>/<source prefix length>=<server>\n");
+  exit(1);
+}
+
 int main(int argc, char **argv)
 {
   int c;
@@ -212,15 +228,46 @@ int main(int argc, char **argv)
       perror("uloop_init");
       abort();
     }
+  proxy_init();
   init_sockets();
+  /* XXX - add support for parsing interfaces too and use them for
+   * announces on reset_epoch */
   while ((c = getopt(argc, argv, "h"))>0)
     {
       switch (c)
         {
         case 'h':
-          /* XXX display help */
-          break;
+          do_help(argv[0], NULL);
         }
     }
+  /* Parse command leftover command line arguments. Assume they're of
+   * type <source prefix>/<source prefix length>=server, all in IPv6
+   * format. */
+  int i;
+  if (optind == argc)
+    do_help(argv[0], "One server is required");
+  for (i = optind ; i < argc ; i++)
+    {
+      char *prefix = argv[i];
+      char *c = strchr(prefix, '=');
+      char *d = strchr(prefix, '/');
+      if (!c || !d || d > c || c <= prefix || d <= prefix)
+        do_help(argv[0], "Invalid server format (no X/Y=Z)");
+      *d = 0;
+      d++;
+      *c = 0;
+      c++;
+      struct in6_addr p, s;
+      DEBUG("converting to IPv6: %s / %s", prefix, c);
+      if (inet_pton(AF_INET6, prefix, &p) < 1
+          || inet_pton(AF_INET6, c, &s) < 1)
+        do_help(argv[0], "Unable to parse the addresses");
+      int plen;
+      if (!(plen = atoi(d)) || plen < 1 || plen > 128)
+        do_help(argv[0], "Invalid prefix length");
+      proxy_add_server(&p, plen, &s);
+    }
+  uloop_run();
+  uloop_done();
   return 0;
 }

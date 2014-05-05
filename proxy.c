@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May  5 23:18:37 2014 mstenber
- * Edit time:     59 min
+ * Last modified: Mon May  5 23:49:29 2014 mstenber
+ * Edit time:     62 min
  *
  */
 
@@ -63,7 +63,7 @@ int determine_local_address(const struct in6_addr *dst,
     }
  err:
   close(s);
-  return -1;
+  return - 1;
 }
 
 static struct list_head servers = LIST_HEAD_INIT(servers);
@@ -79,6 +79,7 @@ static void reset_epoch(void)
 {
   our_epoch = get_time();
   /* XXX - send ANNOUNCEs all over the place! */
+  DEBUG("resetting epoch to %d", (int)our_epoch);
 }
 
 void proxy_init(void)
@@ -129,14 +130,26 @@ void proxy_handle_from_client(struct in6_addr *src,
   pcp_common_header h = (pcp_common_header) data;
 
   if (data_len < (int)sizeof(*h))
-    return;
+    {
+      DEBUG("too short input from client (%d<%d)", data_len, (int)sizeof(*h));
+      return;
+    }
   if (memcmp(src, &h->address, sizeof(*src)))
-    return;
+    {
+      DEBUG("source address and internal address mismatch");
+      return;
+    }
   if (h->version != PCP_VERSION_RFC)
-    return;
+    {
+      DEBUG("wrong PCP version:%d", h->version);
+      return;
+    }
   proxy_server s = determine_server_for_source(src);
   if (!s)
-    return;
+    {
+      DEBUG("no PCP server found");
+      return;
+    }
 #if 0
   /* Hmm. This would be correct, but unfortunately we have to use
    * 'dst' to store server client side expects.. */
@@ -168,7 +181,10 @@ void proxy_handle_from_server(struct in6_addr *src,
   pcp_common_header h = (pcp_common_header) data;
 
   if (data_len < (int)sizeof(*h))
-    return;
+    {
+      DEBUG("too short input from server (%d<%d)", data_len, (int)sizeof(*h));
+      return;
+    }
 
   proxy_server s;
   bool found = false;
@@ -181,10 +197,16 @@ void proxy_handle_from_server(struct in6_addr *src,
         break;
       }
   if (!found)
-    return;
+    {
+      DEBUG("reply from unknown PCP server");
+      return;
+    }
 
   if (h->version != PCP_VERSION_RFC)
-    return;
+    {
+      DEBUG("wrong PCP version:%d", h->version);
+      return;
+    }
 
   /* XXX - insert real option parsing here. */
   pcp_option_s po = {
@@ -198,7 +220,10 @@ void proxy_handle_from_server(struct in6_addr *src,
 
   /* No third party in the end => skip */
   if (memcmp(&tpo->po, &po, sizeof(po)) != 0)
-    return;
+    {
+      DEBUG("PCP THIRD_PARTY option missing, ignoring");
+      return;
+    }
 
   /* Rewrite + track epoch here */
   uint32_t *epochp = (uint32_t *)&h->address;
@@ -208,13 +233,16 @@ void proxy_handle_from_server(struct in6_addr *src,
   if (s->server_time && s->client_time)
     {
       if (curr_server_time + 1 < s->server_time)
-        valid = false;
+        {
+          valid = false;
+          DEBUG("server time moving backwards > 1 seconds");
+        }
       else
         {
           int64_t client_delta = curr_client_time - s->client_time;
           int64_t server_delta = curr_server_time - s->server_time;
-          valid = !(client_delta+2 < server_delta - server_delta/16
-                    || server_delta+2 < client_delta - client_delta/16);
+          valid = !(client_delta + 2 < server_delta - server_delta / 16
+                    || server_delta + 2 < client_delta - client_delta / 16);
         }
     }
   s->server_time = curr_server_time;
