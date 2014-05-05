@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May  5 23:49:29 2014 mstenber
- * Edit time:     62 min
+ * Last modified: Tue May  6 00:05:01 2014 mstenber
+ * Edit time:     64 min
  *
  */
 
@@ -144,6 +144,8 @@ void proxy_handle_from_client(struct in6_addr *src,
       DEBUG("wrong PCP version:%d", h->version);
       return;
     }
+  /* XXX - handle client-originated ANNOUNCE locally */
+
   proxy_server s = determine_server_for_source(src);
   if (!s)
     {
