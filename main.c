@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Mon May  5 18:37:43 2014 mstenber
- * Edit time:     45 min
+ * Last modified: Mon May  5 23:00:05 2014 mstenber
+ * Edit time:     80 min
  *
  */
 
@@ -32,7 +32,7 @@
 #include "pcp.h"
 #include "proxy.h"
 
-int client_port, server_port;
+int client_socket, server_socket;
 
 
 int init_listening_socket(int port)
@@ -70,10 +70,137 @@ int init_listening_socket(int port)
   return -1; /* Not reached */
 }
 
-void init_ports()
+struct uloop_fd client_fd;
+struct uloop_fd server_fd;
+
+void fd_callback(struct uloop_fd *u, unsigned int events)
 {
-  client_port = init_listening_socket(PCP_CLIENT_PORT);
-  server_port = init_listening_socket(PCP_SERVER_PORT);
+  if (!events & ULOOP_READ)
+    return;
+  struct sockaddr_in6 srcsa;
+  uint8_t data[PCP_PAYLOAD_LENGTH+1];
+  struct iovec iov[1] = {
+    {.iov_base = data,
+     .iov_len = sizeof(data) },
+  };
+  uint8_t c[1000];
+  struct msghdr msg = {
+    .msg_iov = iov,
+    .msg_iovlen = sizeof(iov) / sizeof(*iov),
+    .msg_name = &srcsa,
+    .msg_namelen = sizeof(srcsa),
+    .msg_flags = 0,
+    .msg_control = c,
+    .msg_controllen = sizeof(c)
+  };
+  ssize_t l;
+  if ((l = recvmsg(u->fd, &msg, 0)) < 0)
+    {
+      perror("recvmsg");
+      return;
+    }
+  if (srcsa.sin6_family != AF_INET6)
+    return;
+  if (ntohs(srcsa.sin6_port) !=
+      (u == &client_fd ? PCP_SERVER_PORT : PCP_CLIENT_PORT))
+    return;
+  struct cmsghdr *h;
+  for (h = CMSG_FIRSTHDR(&msg); h ;
+       h = CMSG_NXTHDR(&msg, h))
+    if (h->cmsg_level == IPPROTO_IPV6
+        && h->cmsg_type == IPV6_PKTINFO)
+      {
+        struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(h);
+        if (u == &client_fd)
+          proxy_handle_from_client(&srcsa.sin6_addr,
+                                   &ipi6->ipi6_addr,
+                                   data, l);
+        else
+          proxy_handle_from_server(&srcsa.sin6_addr,
+                                   &ipi6->ipi6_addr,
+                                   data, l);
+        return;
+      }
+  /* By default, nothing happens if the option is AWOL. */
+}
+
+void init_sockets()
+{
+  client_socket = init_listening_socket(PCP_CLIENT_PORT);
+  memset(&client_fd, 0, sizeof(client_fd));
+  client_fd.cb = fd_callback;
+  if (uloop_fd_add(&client_fd, ULOOP_READ) < 0)
+    {
+      perror("uloop_fd_add(client)");
+      abort();
+    }
+
+  server_socket = init_listening_socket(PCP_SERVER_PORT);
+  memset(&server_fd, 0, sizeof(server_fd));
+  server_fd.cb = fd_callback;
+  if (uloop_fd_add(&server_fd, ULOOP_READ) < 0)
+    {
+      perror("uloop_fd_add(client)");
+      abort();
+    }
+
+}
+
+static void
+socket_send_from_to(int socket,
+                    struct in6_addr *src,
+                    struct sockaddr_in6 *dst,
+                    void *data, int data_len,
+                    void *data2, int data_len2)
+{
+  struct iovec iov[2] = {
+    {.iov_base = data,
+     .iov_len = data_len },
+    {.iov_base = data2,
+     .iov_len = data_len2 }
+  };
+  struct in6_pktinfo ipi6 = { .ipi6_addr = *src,
+                              .ipi6_ifindex = 0 };
+  uint8_t c[CMSG_SPACE(sizeof(ipi6))];
+  struct msghdr msg = {
+    .msg_iov = iov,
+    .msg_iovlen = sizeof(iov) / sizeof(*iov),
+    .msg_name = dst,
+    .msg_namelen = sizeof(*dst),
+    .msg_flags = 0,
+    .msg_control = c,
+    .msg_controllen = sizeof(c)
+  };
+  struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = IPPROTO_IPV6;
+  cmsg->cmsg_type = IPV6_PKTINFO;
+  cmsg->cmsg_len = CMSG_LEN(sizeof(ipi6));
+  *((struct in6_pktinfo *)CMSG_DATA(cmsg)) = ipi6;
+  if (sendmsg(socket, &msg, 0) < 0)
+    perror("sendmsg");
+}
+
+void proxy_send_to_client(struct in6_addr *src,
+                          struct in6_addr *dst,
+                          void *data, int data_len)
+{
+  struct sockaddr_in6 dstsa = { .sin6_family = AF_INET6,
+                                .sin6_port = htons(PCP_CLIENT_PORT),
+                                .sin6_addr = *dst };
+  socket_send_from_to(client_socket, src, &dstsa, data, data_len, NULL, 0);
+}
+
+void proxy_send_to_server(struct in6_addr *src,
+                          struct in6_addr *dst,
+                          void *data, int data_len,
+                          void *data2, int data_len2)
+{
+  struct sockaddr_in6 dstsa = { .sin6_family = AF_INET6,
+                                .sin6_port = htons(PCP_SERVER_PORT),
+                                .sin6_addr = *dst };
+  socket_send_from_to(server_socket, src, &dstsa,
+                      data, data_len,
+                      data2, data_len2);
 }
 
 int main(int argc, char **argv)
@@ -85,7 +212,7 @@ int main(int argc, char **argv)
       perror("uloop_init");
       abort();
     }
-  init_ports();
+  init_sockets();
   while ((c = getopt(argc, argv, "h"))>0)
     {
       switch (c)

@@ -6,7 +6,7 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 17:22:26 2014 mstenber
- * Last modified: Mon May  5 19:13:17 2014 mstenber
+ * Last modified: Mon May  5 22:45:00 2014 mstenber
  * Edit time:     6 min
  *
  */
@@ -24,6 +24,8 @@
 #define PCP_SERVER_PORT 5351
 
 #define PCP_VERSION_RFC 2
+
+#define PCP_PAYLOAD_LENGTH 1100
 
 typedef struct __packed {
   uint8_t version;

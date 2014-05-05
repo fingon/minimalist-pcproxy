@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May  5 20:02:54 2014 mstenber
- * Edit time:     44 min
+ * Last modified: Mon May  5 22:18:43 2014 mstenber
+ * Edit time:     48 min
  *
  */
 
@@ -104,7 +104,7 @@ void proxy_handle_from_client(struct in6_addr *src,
 {
   pcp_common_header h = (pcp_common_header) data;
 
-  if (data_len < sizeof(*h))
+  if (data_len < (int)sizeof(*h))
     return;
   if (memcmp(src, &h->address, sizeof(*src)))
     return;
@@ -143,7 +143,7 @@ void proxy_handle_from_server(struct in6_addr *src,
 {
   pcp_common_header h = (pcp_common_header) data;
 
-  if (data_len < sizeof(*h))
+  if (data_len < (int)sizeof(*h))
     return;
 
   proxy_server s;
@@ -169,11 +169,13 @@ void proxy_handle_from_server(struct in6_addr *src,
       .len = ntohs(16)
   };
 
-  pcp_thirdparty_option tpo = data + data_len - sizeof(pcp_thirdparty_option_s);
+  pcp_thirdparty_option tpo;
+  tpo = data + data_len - sizeof(*tpo);
 
   /* No third party in the end => skip */
   if (memcmp(&tpo->po, &po, sizeof(po)) != 0)
     return;
 
-  /* XXX - how can we find client address? we can't, currently. */
+  proxy_send_to_client(dst, &tpo->address,
+                       data, data_len - sizeof(*tpo));
 }
