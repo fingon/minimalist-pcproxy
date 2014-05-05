@@ -12,7 +12,7 @@ if(${APPLE})
   link_directories(/usr/local/lib /opt/local/lib)
 endif(${APPLE})
 
-add_executable(minimalist-pcproxy main.c)
+add_executable(minimalist-pcproxy main.c proxy.c)
 target_link_libraries(minimalist-pcproxy ubox)
 
 # Installation rules
