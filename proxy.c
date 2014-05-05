@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May  5 22:18:43 2014 mstenber
- * Edit time:     48 min
+ * Last modified: Mon May  5 23:18:37 2014 mstenber
+ * Edit time:     59 min
  *
  */
 
@@ -23,10 +23,20 @@
 
 typedef struct {
   struct list_head lh;
+
+  /* Source address to match */
   struct in6_addr prefix;
   int plen;
+
+  /* Server to contact */
   struct in6_addr address;
+
+  /* Server epoch tracking */
+  time_t server_time;
+  time_t client_time;
 } proxy_server_s, *proxy_server;
+
+time_t our_epoch;
 
 int determine_local_address(const struct in6_addr *dst,
                             struct in6_addr *result)
@@ -58,8 +68,22 @@ int determine_local_address(const struct in6_addr *dst,
 
 static struct list_head servers = LIST_HEAD_INIT(servers);
 
+static uint32_t get_time(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec;
+}
+
+static void reset_epoch(void)
+{
+  our_epoch = get_time();
+  /* XXX - send ANNOUNCEs all over the place! */
+}
+
 void proxy_init(void)
 {
+  reset_epoch();
 }
 
 void proxy_add_server(struct in6_addr *prefix, int plen,
@@ -176,6 +200,30 @@ void proxy_handle_from_server(struct in6_addr *src,
   if (memcmp(&tpo->po, &po, sizeof(po)) != 0)
     return;
 
+  /* Rewrite + track epoch here */
+  uint32_t *epochp = (uint32_t *)&h->address;
+  uint32_t curr_server_time = ntohl(*epochp);
+  uint32_t curr_client_time = get_time();
+  bool valid = true;
+  if (s->server_time && s->client_time)
+    {
+      if (curr_server_time + 1 < s->server_time)
+        valid = false;
+      else
+        {
+          int64_t client_delta = curr_client_time - s->client_time;
+          int64_t server_delta = curr_server_time - s->server_time;
+          valid = !(client_delta+2 < server_delta - server_delta/16
+                    || server_delta+2 < client_delta - client_delta/16);
+        }
+    }
+  s->server_time = curr_server_time;
+  s->client_time = curr_client_time;
+  if (!valid)
+    reset_epoch();
+  *epochp = get_time() - our_epoch;
+
+  /* XXX override lifetimes if we care to? */
   proxy_send_to_client(dst, &tpo->address,
                        data, data_len - sizeof(*tpo));
 }
