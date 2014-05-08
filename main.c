@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Mon May  5 23:45:28 2014 mstenber
- * Edit time:     97 min
+ * Last modified: Thu May  8 19:50:07 2014 mstenber
+ * Edit time:     120 min
  *
  */
 
@@ -18,7 +18,15 @@
  * default. */
 #define __APPLE_USE_RFC_3542
 
+/* ARGH. It seems that udp46 socket on Apple CANNOT get destination
+ * address for v4 packets, which kind of sucks. TBD: Figure how to do
+ * this without second socket. */
+#undef USE_IP_REVCDSTADDR
 #endif /* __APPLE__ */
+
+#ifdef __linux__
+#define USE_IP_PKTINFO
+#endif /* __linux__ */
 
 #include <stdio.h>
 #include <libubox/uloop.h>
@@ -44,13 +52,14 @@ int init_listening_socket(int port)
 
   if (s < 0)
     perror("socket");
-#if 0
-#ifdef __linux__
-  /* Linux (used to?) require this to get info on mapped sockets. */
+#ifdef USE_IP_PKTINFO
   else if (setsockopt(s, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on)) < 0)
     perror("setsockopt IP_PKTINFO");
-#endif /* __linux__ */
-#endif /* 0 */
+#endif /* USE_IP_PKTINFO */
+#ifdef USE_IP_REVCDSTADDR
+  else if (setsockopt(s, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on)) < 0)
+    perror("setsockopt IP_RECVDSTADDR");
+#endif /* USE_IP_REVCDSTADDR */
   else if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on)) < 0)
     perror("setsockopt IPV6_RECVPKTINFO");
   else if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0)
@@ -71,8 +80,16 @@ int init_listening_socket(int port)
   return -1; /* Not reached */
 }
 
-struct uloop_fd client_fd;
-struct uloop_fd server_fd;
+#define IN_ADDR_TO_MAPPED_IN6_ADDR(a, a6)       \
+do {                                            \
+  memset(a6, 0, sizeof(*(a6)));                 \
+  (a6)->s6_addr[10] = 0xff;                     \
+  (a6)->s6_addr[11] = 0xff;                     \
+  ((uint32_t *)a6)[3] = *((uint32_t *)a);       \
+ } while(0)
+
+struct uloop_fd client_ufd;
+struct uloop_fd server_ufd;
 
 void fd_callback(struct uloop_fd *u, unsigned int events)
 {
@@ -105,47 +122,69 @@ void fd_callback(struct uloop_fd *u, unsigned int events)
       DEBUG("got non-AF_INET6 packet");
       return;
     }
-  uint16_t port = ntohs(srcsa.sin6_port);
-  if (port != (u == &client_fd ? PCP_SERVER_PORT : PCP_CLIENT_PORT))
-    {
-      DEBUG("wrong source port: %d", port);
-      return;
-    }
   struct cmsghdr *h;
+  struct in6_addr *dst = NULL;
+#ifdef USE_IP_REVCDSTADDR
+  struct in6_addr dst_buf;
+#endif /* USE_IP_REVCDSTADDR */
+
   for (h = CMSG_FIRSTHDR(&msg); h;
        h = CMSG_NXTHDR(&msg, h))
     if (h->cmsg_level == IPPROTO_IPV6
         && h->cmsg_type == IPV6_PKTINFO)
       {
         struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(h);
-        if (u == &client_fd)
-          proxy_handle_from_client(&srcsa.sin6_addr,
-                                   &ipi6->ipi6_addr,
-                                   data, l);
-        else
-          proxy_handle_from_server(&srcsa.sin6_addr,
-                                   &ipi6->ipi6_addr,
-                                   data, l);
-        return;
+        dst = &ipi6->ipi6_addr;
       }
-  /* By default, nothing happens if the option is AWOL. */
+#ifdef USE_IP_REVCDSTADDR
+    else if (h->cmsg_level == IPPROTO_IP
+             && h->cmsg_type == IP_RECVDSTADDR)
+      {
+        struct in_addr *a = (struct in_addr *)CMSG_DATA(h);
+        IN_ADDR_TO_MAPPED_IN6_ADDR(a, &dst_buf);
+        dst = &dst_buf;
+      }
+#endif /* USE_IP_REVCDSTADDR */
+  if (!dst)
+    {
+      /* By default, nothing happens if the option is AWOL. */
+      DEBUG("unknown destination");
+      return;
+    }
+  if (u == &client_ufd)
+    {
+      DEBUG("calling proxy_handle_from_server");
+      proxy_handle_from_server(&srcsa.sin6_addr, dst, data, l);
+    }
+  else if (u == &server_ufd)
+    {
+      DEBUG("calling proxy_handle_from_client");
+      proxy_handle_from_client(&srcsa.sin6_addr, dst, data, l);
+    }
+  else
+    {
+      DEBUG("invalid callback?!?");
+    }
+
 }
 
 void init_sockets()
 {
   client_socket = init_listening_socket(PCP_CLIENT_PORT);
-  memset(&client_fd, 0, sizeof(client_fd));
-  client_fd.cb = fd_callback;
-  if (uloop_fd_add(&client_fd, ULOOP_READ) < 0)
+  memset(&client_ufd, 0, sizeof(client_ufd));
+  client_ufd.cb = fd_callback;
+  client_ufd.fd = client_socket;
+  if (uloop_fd_add(&client_ufd, ULOOP_READ) < 0)
     {
       perror("uloop_fd_add(client)");
       abort();
     }
 
   server_socket = init_listening_socket(PCP_SERVER_PORT);
-  memset(&server_fd, 0, sizeof(server_fd));
-  server_fd.cb = fd_callback;
-  if (uloop_fd_add(&server_fd, ULOOP_READ) < 0)
+  memset(&server_ufd, 0, sizeof(server_ufd));
+  server_ufd.cb = fd_callback;
+  server_ufd.fd = server_socket;
+  if (uloop_fd_add(&server_ufd, ULOOP_READ) < 0)
     {
       perror("uloop_fd_add(client)");
       abort();
@@ -194,6 +233,7 @@ void proxy_send_to_client(struct in6_addr *src,
   struct sockaddr_in6 dstsa = { .sin6_family = AF_INET6,
                                 .sin6_port = htons(PCP_CLIENT_PORT),
                                 .sin6_addr = *dst };
+  DEBUG("proxy_send_to_client");
   socket_send_from_to(client_socket, src, &dstsa, data, data_len, NULL, 0);
 }
 
@@ -205,6 +245,7 @@ void proxy_send_to_server(struct in6_addr *src,
   struct sockaddr_in6 dstsa = { .sin6_family = AF_INET6,
                                 .sin6_port = htons(PCP_SERVER_PORT),
                                 .sin6_addr = *dst };
+  DEBUG("proxy_send_to_server");
   socket_send_from_to(server_socket, src, &dstsa,
                       data, data_len,
                       data2, data_len2);
