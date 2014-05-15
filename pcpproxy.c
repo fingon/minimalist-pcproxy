@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 19:51:41 2014 mstenber
- * Edit time:     110 min
+ * Last modified: Thu May 15 20:24:33 2014 mstenber
+ * Edit time:     122 min
  *
  */
 
@@ -77,6 +77,19 @@ static void reset_epoch(void)
 
 /********************************************************** Request handling */
 
+static pcp_proxy_request get_request(pcp_common_header h)
+{
+  int i;
+
+  for (i = 0; i < NUM_REQUESTS; i++)
+    {
+      pcp_proxy_request req = &requests[i];
+      if (memcmp(req->nonce, h->data, PCP_NONCE_LENGTH) == 0 && req->t)
+        return req;
+    }
+  return NULL;
+}
+
 static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
                                           pcp_common_header h)
 {
@@ -85,6 +98,9 @@ static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
   time_t old_time = now - PCP_PROXY_ASSUMED_REQUESTS_PER_SECOND;
   time_t t;
   pcp_proxy_request req, breq = NULL;
+
+  if (get_request(h))
+    return NULL;
 
   for (i = 0; i < NUM_REQUESTS; i++)
     {
@@ -106,19 +122,6 @@ static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
   breq->src = *src;
   memcpy(breq->nonce, h->data, PCP_NONCE_LENGTH);
   return breq;
-}
-
-static pcp_proxy_request get_request(pcp_common_header h)
-{
-  int i;
-
-  for (i = 0; i < NUM_REQUESTS; i++)
-    {
-      pcp_proxy_request req = &requests[i];
-      if (memcmp(req->nonce, h->data, PCP_NONCE_LENGTH) == 0)
-        return req;
-    }
-  return NULL;
 }
 
 
@@ -183,11 +186,7 @@ bool pcp_proxy_add_server_string(const char *string,
       goto err;
     }
   struct sockaddr_in6 sin6;
-  memset(&sin6, 0, sizeof(sin6));
-  sin6.sin6_len = sizeof(sin6);
-  sin6.sin6_family = AF_INET6;
-  sin6.sin6_addr = s;
-  sin6.sin6_port = htons(PCP_SERVER_PORT);
+  sockaddr_in6_set(&sin6, &s, PCP_SERVER_PORT);
   pcp_proxy_add_server(&p, plen, &sin6);
   free(bases);
   return true;
@@ -215,6 +214,31 @@ static pcp_proxy_server determine_server_for_source(struct in6_addr *src)
 
       /* Yay, match */
       return s;
+    }
+  return NULL;
+}
+
+pcp_thirdparty_option find_third_party_option(void *data, int data_len)
+{
+  pcp_common_header ch = data;
+  void *data_end = data + data_len;
+  int opcode = ch->opcode & ~PCP_OPCODE_RESPONSE;
+  void *ptr = data +
+    (opcode == PCP_OPCODE_MAP ? sizeof(pcp_map_header_s) :
+     sizeof(pcp_peer_header_s));
+  pcp_thirdparty_option tpo;
+  pcp_option_s po = {
+    .option_code = PCP_OPTION_THIRD_PARTY,
+    .reserved = 0,
+    .len = ntohs(16)
+  };
+  while (ptr + sizeof(*tpo) <= data_end)
+    {
+      tpo = ptr;
+      if (memcmp(&tpo->po, &po, sizeof(po)) == 0)
+        return tpo;
+      /* Move to next option */
+      ptr = ptr + ntohs(tpo->po.len) + 4;
     }
   return NULL;
 }
@@ -250,7 +274,6 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       DEBUG("no PCP server found");
       return;
     }
-
   switch (h->opcode)
     {
     case PCP_OPCODE_ANNOUNCE:
@@ -270,13 +293,16 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       return;
     }
 
+
   pcp_proxy_request req = allocate_request(src, h);
   if (!req)
     {
-      DEBUG("too busy -> ignoring");
+      DEBUG("too busy or resend -> ignoring");
       return;
     }
 
+  pcp_thirdparty_option tpop = find_third_party_option(data, data_len);
+  int tpop_len = 0;
   pcp_thirdparty_option_s tpo = {
     .po = {
       .option_code = PCP_OPTION_THIRD_PARTY,
@@ -285,12 +311,18 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
     },
     .address = src->sin6_addr
   };
+  if (!tpop)
+    {
+      tpop = &tpo;
+      tpop_len = sizeof(*tpop);
+    }
 
   h->address = dst->sin6_addr;
   pcp_proxy_send_to_server(NULL, &s->address,
                            data, data_len,
-                           &tpo, sizeof(tpo));
+                           tpop, tpop_len);
 }
+
 
 void pcp_proxy_handle_from_server(struct sockaddr_in6 *src,
                                   struct sockaddr_in6 *dst,
@@ -335,20 +367,10 @@ void pcp_proxy_handle_from_server(struct sockaddr_in6 *src,
       return;
     }
 
-
-
-  /* XXX - insert real option parsing here. */
-  pcp_option_s po = {
-    .option_code = PCP_OPTION_THIRD_PARTY,
-    .reserved = 0,
-    .len = ntohs(16)
-  };
-
-  pcp_thirdparty_option tpo;
-  tpo = data + data_len - sizeof(*tpo);
+  pcp_thirdparty_option tpo = find_third_party_option(data, data_len);
 
   /* No third party in the end => skip */
-  if (memcmp(&tpo->po, &po, sizeof(po)) != 0)
+  if (!tpo)
     {
       DEBUG("PCP THIRD_PARTY option missing, ignoring");
       return;

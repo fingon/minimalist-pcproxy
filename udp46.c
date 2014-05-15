@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 19:52:34 2014 mstenber
- * Edit time:     95 min
+ * Last modified: Thu May 15 20:08:41 2014 mstenber
+ * Edit time:     99 min
  *
  */
 
@@ -83,10 +83,7 @@ static int init_listening_socket(int pf, uint16_t port)
       if (pf == PF_INET6)
         {
           struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
-          memset(sin6, 0, sizeof(*sin6));
-          sin6->sin6_len = sizeof(*sin6);
-          sin6->sin6_family = AF_INET6;
-          sin6->sin6_port = htons(port);
+          sockaddr_in6_set(sin6, NULL, port);
           ss_len = sizeof(*sin6);
         }
       else
@@ -191,21 +188,17 @@ ssize_t udp46_recv(udp46 s,
     {
       struct sockaddr_in *sa = (struct sockaddr_in *)src;
       struct in_addr a = sa->sin_addr;
-      uint16_t port = sa->sin_port;
+      uint16_t port = ntohs(sa->sin_port);
 
-      memset(src, 0, sizeof(*src));
+      sockaddr_in6_set(src, NULL, port);
       IN_ADDR_TO_MAPPED_IN6_ADDR(&a, &src->sin6_addr);
-      src->sin6_len = sizeof(*src);
-      src->sin6_port = port;
-      src->sin6_family = AF_INET6;
     }
 
   /* If we don't care about destination address, we're already done */
   if (!dst)
     return l;
 
-  memset(dst, 0, sizeof(*dst));
-  dst->sin6_port = htons(s->port);
+  sockaddr_in6_set(dst, NULL, s->port);
 
   struct cmsghdr *h;
   /* Iterate through the message headers looking for destination
@@ -217,8 +210,6 @@ ssize_t udp46_recv(udp46 s,
         && h->cmsg_type == IPV6_PKTINFO)
       {
         struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(h);
-        dst->sin6_len = sizeof(*dst);
-        dst->sin6_family = AF_INET6;
         dst->sin6_addr = ipi6->ipi6_addr;
         dst->sin6_scope_id = ipi6->ipi6_ifindex;
         return l;
@@ -229,8 +220,6 @@ ssize_t udp46_recv(udp46 s,
       {
         struct in_addr *a = (struct in_addr *)CMSG_DATA(h);
         IN_ADDR_TO_MAPPED_IN6_ADDR(a, &dst->sin6_addr);
-        dst->sin6_len = sizeof(*dst);
-        dst->sin6_family = AF_INET6;
         return l;
       }
 #endif /* IP_REVCDSTADDR */
@@ -240,8 +229,6 @@ ssize_t udp46_recv(udp46 s,
       {
         struct in_pktinfo *ipi = (struct in_pktinfo *) CMSG_DATA(h);
         IN_ADDR_TO_MAPPED_IN6_ADDR(&ipi->ipi_addr, &dst->sin6_addr);
-        dst->sin6_len = sizeof(*dst);
-        dst->sin6_family = AF_INET6;
         return l;
       }
 #endif /* IP_PKTINFO */

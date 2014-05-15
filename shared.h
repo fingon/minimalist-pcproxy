@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 19:28:48 2014 mstenber
- * Last modified: Thu May 15 19:17:32 2014 mstenber
- * Edit time:     13 min
+ * Last modified: Thu May 15 20:09:09 2014 mstenber
+ * Edit time:     15 min
  *
  */
 
@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifdef __APPLE__
 #include <sys/queue.h>
@@ -61,6 +62,20 @@ static inline const char *_sockaddr_in6_repr(const struct sockaddr_in6 *sa,
 }
 
 #define SOCKADDR_IN6_REPR(sin6) _sockaddr_in6_repr(sin6, alloca(123), 123)
+
+static inline void sockaddr_in6_set(struct sockaddr_in6 *sin6,
+                                    struct in6_addr *a6,
+                                    uint16_t port)
+{
+  memset(sin6, 0, sizeof(*sin6));
+#ifdef SIN6_LEN
+  sin6->sin6_len = sizeof(*sin6);
+#endif /* SIN6_LEN */
+  sin6->sin6_family = AF_INET6;
+  if (a6)
+    sin6->sin6_addr = *a6;
+  sin6->sin6_port = htons(port);
+}
 
 #ifndef NDEBUG
 
