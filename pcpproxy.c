@@ -6,20 +6,35 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 10:24:24 2014 mstenber
- * Edit time:     64 min
+ * Last modified: Thu May 15 13:53:46 2014 mstenber
+ * Edit time:     100 min
  *
  */
+
+#include "shared.h"
+#include "pcpproxy.h"
+#include "pcp.h"
 
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <libubox/uloop.h>
+#include <libubox/usock.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <assert.h>
 
-#include "shared.h"
-#include "pcp.h"
-#include "pcpproxy.h"
+typedef struct {
+  struct sockaddr_in6 src;
+  uint8_t nonce[PCP_NONCE_LENGTH];
+  time_t t;
+} pcp_proxy_request_s, *pcp_proxy_request;
 
 typedef struct {
   struct list_head lh;
@@ -29,44 +44,22 @@ typedef struct {
   int plen;
 
   /* Server to contact */
-  struct in6_addr address;
+  struct sockaddr_in6 address;
 
   /* Server epoch tracking */
   time_t server_time;
   time_t client_time;
-} proxy_server_s, *proxy_server;
+} pcp_proxy_server_s, *pcp_proxy_server;
 
+/* This is the global state proxy has */
 time_t our_epoch;
-
-int determine_local_address(const struct in6_addr *dst,
-                            struct in6_addr *result)
-{
-  int s = socket(PF_INET6, SOCK_DGRAM, 0);
-  struct sockaddr_in6 sin6;
-  socklen_t sin6_len = sizeof(sin6);
-
-  if (s < 0)
-    return -1;
-  sin6.sin6_family = AF_INET6;
-  sin6.sin6_port = 123; /* random */
-  sin6.sin6_addr = *dst;
-  if (connect(s, (struct sockaddr *)&sin6, sizeof(sin6))
-      && errno != EINPROGRESS)
-    goto err;
-  if (getsockname(s, (struct sockaddr *)&sin6, &sin6_len))
-    goto err;
-  if (sin6.sin6_family == AF_INET6)
-    {
-      *result = sin6.sin6_addr;
-      close(s);
-      return 0;
-    }
- err:
-  close(s);
-  return - 1;
-}
-
 static struct list_head servers = LIST_HEAD_INIT(servers);
+pcp_proxy_request_s requests[PCP_PROXY_ASSUMED_REQUEST_ROUNDTRIP_SECONDS *
+                             PCP_PROXY_ASSUMED_REQUESTS_PER_SECOND + 1];
+
+#define NUM_REQUESTS ((int) (sizeof(requests)/sizeof(requests[0])))
+
+/************************************************************* Time handling */
 
 static uint32_t get_time(void)
 {
@@ -82,15 +75,66 @@ static void reset_epoch(void)
   DEBUG("resetting epoch to %d", (int)our_epoch);
 }
 
-void proxy_init(void)
+/********************************************************** Request handling */
+
+static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
+                                          pcp_common_header h)
 {
+  int i;
+  time_t now = get_time();
+  time_t old_time = now - PCP_PROXY_ASSUMED_REQUESTS_PER_SECOND;
+  time_t t;
+  pcp_proxy_request req, breq = NULL;
+
+  for (i = 0; i < NUM_REQUESTS; i++)
+    {
+      req = &requests[i];
+      if ((t = req->t) < old_time)
+        {
+          if (!t)
+            {
+              breq = req;
+              break;
+            }
+          if (!breq || breq->t > req->t)
+            breq = req;
+        }
+    }
+  if (i == NUM_REQUESTS && !breq)
+    return NULL;
+  breq->t = now;
+  breq->src = *src;
+  memcpy(breq->nonce, h->data, PCP_NONCE_LENGTH);
+  return breq;
+}
+
+static pcp_proxy_request get_request(pcp_common_header h)
+{
+  int i;
+
+  for (i = 0; i < NUM_REQUESTS; i++)
+    {
+      pcp_proxy_request req = &requests[i];
+      if (memcmp(req->nonce, h->data, PCP_NONCE_LENGTH) == 0)
+        return req;
+    }
+  return NULL;
+}
+
+
+/************************************************************ Public methods */
+
+
+void pcp_proxy_init(void)
+{
+  memset(requests, 0, sizeof(requests));
   reset_epoch();
 }
 
-void proxy_add_server(struct in6_addr *prefix, int plen,
-                      struct in6_addr *address)
+void pcp_proxy_add_server(struct in6_addr *prefix, int plen,
+                          struct sockaddr_in6 *address)
 {
-  proxy_server s = calloc(1, sizeof(*s));
+  pcp_proxy_server s = calloc(1, sizeof(*s));
   assert(s);
   s->prefix = *prefix;
   s->plen = plen;
@@ -98,9 +142,57 @@ void proxy_add_server(struct in6_addr *prefix, int plen,
   list_add(&s->lh, &servers);
 }
 
-static proxy_server determine_server_for_source(struct in6_addr *src)
+bool pcp_proxy_add_server_string(const char *string,
+                                 char *err, size_t err_len)
 {
-  proxy_server s;
+  char *bases = strdup(string);
+
+  if (!bases)
+    {
+      snprintf(err, err_len, "OOM (strdup)");
+      return false;
+    }
+  char *prefix = bases;
+  char *c = strchr(prefix, '=');
+  char *d = strchr(prefix, '/');
+  if (!c || !d || d > c || c <= prefix || d <= prefix)
+    {
+      snprintf(err, err_len, "Invalid server format (no X/Y=Z)");
+    err:
+      free(bases);
+      return false;
+    }
+  *d = 0;
+  d++;
+  *c = 0;
+  c++;
+  struct in6_addr p, s;
+  DEBUG("converting to IPv6: %s / %s", prefix, c);
+  if (inet_pton(AF_INET6, prefix, &p) < 1
+      || inet_pton(AF_INET6, c, &s) < 1)
+    {
+      snprintf(err, err_len, "Unable to parse the addresses");
+      goto err;
+    }
+  int plen;
+  if (!(plen = atoi(d)) || plen < 1 || plen > 128)
+    {
+      snprintf(err, err_len, "Invalid prefix length");
+      goto err;
+    }
+  struct sockaddr_in6 sin6;
+  memset(&sin6, 0, sizeof(sin6));
+  sin6.sin6_addr = s;
+  sin6.sin6_port = ntohs(PCP_SERVER_PORT);
+  pcp_proxy_add_server(&p, plen, &sin6);
+  free(bases);
+  return true;
+}
+
+
+static pcp_proxy_server determine_server_for_source(struct in6_addr *src)
+{
+  pcp_proxy_server s;
 
   list_for_each_entry(s, &servers, lh)
     {
@@ -114,7 +206,7 @@ static proxy_server determine_server_for_source(struct in6_addr *src)
       int bits = s->plen % 8;
       if (bits
           && s->prefix.s6_addr[whole] >> (8 - bits) !=
-             src->s6_addr[whole] >> (8 - bits))
+          src->s6_addr[whole] >> (8 - bits))
         continue;
 
       /* Yay, match */
@@ -123,9 +215,9 @@ static proxy_server determine_server_for_source(struct in6_addr *src)
   return NULL;
 }
 
-void proxy_handle_from_client(struct in6_addr *src,
-                              struct in6_addr *dst,
-                              void *data, int data_len)
+void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
+                                  struct sockaddr_in6 *dst,
+                                  void *data, int data_len)
 {
   pcp_common_header h = (pcp_common_header) data;
 
@@ -145,21 +237,37 @@ void proxy_handle_from_client(struct in6_addr *src,
       return;
     }
   /* XXX - handle client-originated ANNOUNCE locally */
-
-  proxy_server s = determine_server_for_source(src);
+  pcp_proxy_server s = determine_server_for_source(&src->sin6_addr);
   if (!s)
     {
       DEBUG("no PCP server found");
       return;
     }
-#if 0
-  /* Hmm. This would be correct, but unfortunately we have to use
-   * 'dst' to store server client side expects.. */
-  struct in6_addr my_src;
-  if (determine_local_address(&s->address,
-                              &my_src) < 0)
-    return;
-#endif /* 0 */
+
+  switch (h->opcode)
+    {
+    case PCP_OPCODE_ANNOUNCE:
+      /* XXX - handle client-originated ANNOUNCE locally */
+      return;
+      break;
+    case PCP_OPCODE_PEER:
+    case PCP_OPCODE_MAP:
+      if (data_len < (int)(sizeof(*h) + PCP_NONCE_LENGTH))
+        {
+          DEBUG("too short peer/map");
+          return;
+        }
+    default:
+      DEBUG("unknown opcode");
+      return;
+    }
+
+  pcp_proxy_request req = allocate_request(src, h);
+  if (!req)
+    {
+      DEBUG("too busy -> ignoring");
+      return;
+    }
 
   pcp_thirdparty_option_s tpo = {
     .po = {
@@ -167,18 +275,18 @@ void proxy_handle_from_client(struct in6_addr *src,
       .reserved = 0,
       .len = ntohs(16)
     },
-    .address = *src
+    .address = src->sin6_addr
   };
 
-  h->address = *dst;
-  proxy_send_to_server(dst, &s->address,
-                       data, data_len,
-                       &tpo, sizeof(tpo));
+  h->address = dst->sin6_addr;
+  pcp_proxy_send_to_server(dst, &s->address,
+                           data, data_len,
+                           &tpo, sizeof(tpo));
 }
 
-void proxy_handle_from_server(struct in6_addr *src,
-                              struct in6_addr *dst,
-                              void *data, int data_len)
+void pcp_proxy_handle_from_server(struct sockaddr_in6 *src,
+                                  struct sockaddr_in6 *dst,
+                                  void *data, int data_len)
 {
   pcp_common_header h = (pcp_common_header) data;
 
@@ -188,7 +296,7 @@ void proxy_handle_from_server(struct in6_addr *src,
       return;
     }
 
-  proxy_server s;
+  pcp_proxy_server s;
   bool found = false;
 
   /* Verify we know about the server */
@@ -210,11 +318,20 @@ void proxy_handle_from_server(struct in6_addr *src,
       return;
     }
 
+  if (h->opcode != (PCP_OPCODE_PEER | PCP_OPCODE_RESPONSE)
+      && h->opcode != (PCP_OPCODE_MAP | PCP_OPCODE_RESPONSE))
+    {
+      DEBUG("ignored opcode %d from server", h->opcode);
+      return;
+    }
+
+
+
   /* XXX - insert real option parsing here. */
   pcp_option_s po = {
-      .option_code = PCP_OPTION_THIRD_PARTY,
-      .reserved = 0,
-      .len = ntohs(16)
+    .option_code = PCP_OPTION_THIRD_PARTY,
+    .reserved = 0,
+    .len = ntohs(16)
   };
 
   pcp_thirdparty_option tpo;
@@ -227,6 +344,18 @@ void proxy_handle_from_server(struct in6_addr *src,
       return;
     }
 
+  if (data_len < (int)(sizeof(*h) + PCP_NONCE_LENGTH))
+    {
+      DEBUG("too short peer/map from server");
+      return;
+    }
+
+  pcp_proxy_request req = get_request(h);
+  if (!req)
+    {
+      DEBUG("no request found");
+      return;
+    }
   /* Rewrite + track epoch here */
   uint32_t *epochp = (uint32_t *)&h->address;
   uint32_t curr_server_time = ntohl(*epochp);
@@ -254,6 +383,8 @@ void proxy_handle_from_server(struct in6_addr *src,
   *epochp = get_time() - our_epoch;
 
   /* XXX override lifetimes if we care to? */
-  proxy_send_to_client(dst, &tpo->address,
-                       data, data_len - sizeof(*tpo));
+  pcp_proxy_send_to_client(dst, &req->src, data, data_len - sizeof(*tpo));
+
+  /* No longer needed request */
+  req->t = 0;
 }

@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 17:22:26 2014 mstenber
- * Last modified: Mon May  5 22:45:00 2014 mstenber
- * Edit time:     6 min
+ * Last modified: Thu May 15 13:49:53 2014 mstenber
+ * Edit time:     8 min
  *
  */
 
@@ -27,12 +27,20 @@
 
 #define PCP_PAYLOAD_LENGTH 1100
 
+#define PCP_NONCE_LENGTH 12
+
+#define PCP_OPCODE_ANNOUNCE 0
+#define PCP_OPCODE_MAP 1
+#define PCP_OPCODE_PEER 2
+#define PCP_OPCODE_RESPONSE 128
+
 typedef struct __packed {
   uint8_t version;
   uint8_t opcode;
   uint16_t reserved;
   uint32_t lifetime;
   struct in6_addr address;
+  char data[];
 } pcp_common_header_s, *pcp_common_header;
 
 typedef struct __packed {

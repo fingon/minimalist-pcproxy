@@ -10,9 +10,12 @@ if(${APPLE})
   # Xcode 4.* target breaks because it doesn't add 'system-ish' include paths
   include_directories(/usr/local/include /opt/local/include)
   link_directories(/usr/local/lib /opt/local/lib)
+  # Haha. Got to love advanced IPv6 socket API being disabled by
+  # default - RFC from 2003, and now it's 2014.
+  add_definitions(-D__APPLE_USE_RFC_3542)
 endif(${APPLE})
 
-add_executable(minimalist-pcproxy main.c pcpproxy.c)
+add_executable(minimalist-pcproxy main.c pcpproxy.c udp46.c)
 target_link_libraries(minimalist-pcproxy ubox)
 
 # Installation rules
