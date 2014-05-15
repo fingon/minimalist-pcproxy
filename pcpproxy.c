@@ -1,12 +1,12 @@
 /*
- * $Id: proxy.c $
+ * $Id: pcpproxy.c $
  *
  * Author: Markus Stenberg <markus stenberg@iki.fi>
  *
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Tue May  6 00:05:01 2014 mstenber
+ * Last modified: Thu May 15 10:24:24 2014 mstenber
  * Edit time:     64 min
  *
  */
@@ -18,8 +18,8 @@
 #include <string.h>
 
 #include "shared.h"
-#include "proxy.h"
 #include "pcp.h"
+#include "pcpproxy.h"
 
 typedef struct {
   struct list_head lh;

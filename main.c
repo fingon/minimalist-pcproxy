@@ -6,7 +6,7 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Thu May  8 19:50:07 2014 mstenber
+ * Last modified: Thu May 15 10:24:16 2014 mstenber
  * Edit time:     120 min
  *
  */
@@ -39,7 +39,7 @@
 
 #include "shared.h"
 #include "pcp.h"
-#include "proxy.h"
+#include "pcpproxy.h"
 
 int client_socket, server_socket;
 

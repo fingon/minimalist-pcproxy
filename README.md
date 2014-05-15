@@ -18,6 +18,8 @@ Goals
   http://tools.ietf.org/html/draft-ietf-pcp-proxy-05 and
   https://tools.ietf.org/html/rfc6887 ) as closely as possible
 
+- embeddable (just take pcp* and run with it, please)
+
 Non-goals
 ---------
 
