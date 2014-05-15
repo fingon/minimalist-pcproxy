@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Thu May 15 14:03:17 2014 mstenber
- * Edit time:     150 min
+ * Last modified: Thu May 15 14:14:26 2014 mstenber
+ * Edit time:     152 min
  *
  */
 
@@ -72,8 +72,13 @@ void fd_callback(struct uloop_fd *u, unsigned int events)
 
 void init_sockets()
 {
-  clients = udp46_create(0);
+  /* TRY to take client port, but failing that, any port should work. */
+  clients = udp46_create(PCP_CLIENT_PORT);
+  if (!clients)
+    clients = udp46_create(0);
   assert(clients);
+
+  /* We insist on server port, though. */
   servers = udp46_create(PCP_SERVER_PORT);
   assert(servers);
 
@@ -167,5 +172,8 @@ int main(int argc, char **argv)
     }
   uloop_run();
   uloop_done();
+  /* Not reached, included here just for pedantism.. */
+  udp46_destroy(clients);
+  udp46_destroy(servers);
   return 0;
 }

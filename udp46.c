@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 14:05:28 2014 mstenber
- * Edit time:     19 min
+ * Last modified: Thu May 15 14:14:51 2014 mstenber
+ * Edit time:     22 min
  *
  */
 
@@ -238,3 +238,10 @@ int udp46_send_iovec(udp46 s,
   return sendmsg(s->s6, &msg, 0);
 }
 
+
+void udp46_destroy(udp46 s)
+{
+  close(s->s4);
+  close(s->s6);
+  free(s);
+}
