@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 18:00:24 2014 mstenber
- * Edit time:     54 min
+ * Last modified: Thu May 15 18:06:05 2014 mstenber
+ * Edit time:     56 min
  *
  */
 
@@ -33,6 +33,7 @@
 struct udp46_t {
   int s4;
   int s6;
+  uint16_t port;
 };
 
 #define IN_ADDR_TO_MAPPED_IN6_ADDR(a, a6)       \
@@ -137,6 +138,7 @@ udp46 udp46_create(uint16_t port)
     {
       s->s4 = fd1;
       s->s6 = fd2;
+      s->port = port;
       return s;
     }
   if (fd1 >= 0)
@@ -197,6 +199,8 @@ ssize_t udp46_recv(udp46 s,
     return l;
 
   memset(dst, 0, sizeof(*dst));
+  dst->sin6_port = htons(s->port);
+
   struct cmsghdr *h;
   /* Iterate through the message headers looking for destination
    * address, and if finding it, return it (in dst, as V4 mapped if
