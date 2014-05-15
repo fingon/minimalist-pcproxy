@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 20:24:33 2014 mstenber
- * Edit time:     122 min
+ * Last modified: Thu May 15 20:30:05 2014 mstenber
+ * Edit time:     111 min
  *
  */
 
@@ -80,11 +80,12 @@ static void reset_epoch(void)
 static pcp_proxy_request get_request(pcp_common_header h)
 {
   int i;
+  void *nonce = h+1;
 
   for (i = 0; i < NUM_REQUESTS; i++)
     {
       pcp_proxy_request req = &requests[i];
-      if (memcmp(req->nonce, h->data, PCP_NONCE_LENGTH) == 0 && req->t)
+      if (memcmp(req->nonce, nonce, PCP_NONCE_LENGTH) == 0 && req->t)
         return req;
     }
   return NULL;
@@ -98,6 +99,7 @@ static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
   time_t old_time = now - PCP_PROXY_ASSUMED_REQUESTS_PER_SECOND;
   time_t t;
   pcp_proxy_request req, breq = NULL;
+  void *nonce = h+1;
 
   if (get_request(h))
     return NULL;
@@ -120,7 +122,7 @@ static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
     return NULL;
   breq->t = now;
   breq->src = *src;
-  memcpy(breq->nonce, h->data, PCP_NONCE_LENGTH);
+  memcpy(breq->nonce, nonce, PCP_NONCE_LENGTH);
   return breq;
 }
 

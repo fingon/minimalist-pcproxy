@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 17:22:26 2014 mstenber
- * Last modified: Thu May 15 20:21:06 2014 mstenber
- * Edit time:     11 min
+ * Last modified: Thu May 15 20:28:20 2014 mstenber
+ * Edit time:     9 min
  *
  */
 
@@ -40,7 +40,6 @@ typedef struct __packed {
   uint16_t reserved;
   uint32_t lifetime;
   struct in6_addr address;
-  char data[];
 } pcp_common_header_s, *pcp_common_header;
 
 typedef struct __packed {
