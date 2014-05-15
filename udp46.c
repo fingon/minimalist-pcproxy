@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 14:14:51 2014 mstenber
- * Edit time:     22 min
+ * Last modified: Thu May 15 18:00:24 2014 mstenber
+ * Edit time:     54 min
  *
  */
 
@@ -43,6 +43,11 @@ do {                                            \
   ((uint32_t *)a6)[3] = *((uint32_t *)a);       \
  } while (0)
 
+#define MAPPED_IN6_ADDR_TO_IN_ADDR(a6, a)       \
+do {                                            \
+  *((uint32_t *)a) = ((uint32_t *)a6)[3];       \
+ } while (0)
+
 static int init_listening_socket(int pf, int port)
 {
   int on = 1;
@@ -54,16 +59,16 @@ static int init_listening_socket(int pf, int port)
     perror("socket");
   else if (fcntl(s, F_SETFL, O_NONBLOCK) < 0)
     perror("fnctl O_NONBLOCK");
-#ifdef USE_IP_PKTINFO
+#ifdef IP_PKTINFO
   else if (pf == PF_INET
            && setsockopt(s, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on)) < 0)
     perror("setsockopt IP_PKTINFO");
-#endif /* USE_IP_PKTINFO */
-#ifdef USE_IP_REVCDSTADDR
+#endif /* IP_PKTINFO */
+#ifdef IP_REVCDSTADDR
   else if (pf == PF_INET
            && setsockopt(s, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on)) < 0)
     perror("setsockopt IP_RECVDSTADDR");
-#endif /* USE_IP_REVCDSTADDR */
+#endif /* IP_REVCDSTADDR */
   else if (pf == PF_INET6
            && setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on)) < 0)
     perror("setsockopt IPV6_RECVPKTINFO");
@@ -169,22 +174,33 @@ ssize_t udp46_recv(udp46 s,
   };
   ssize_t l;
 
+  /* If we can't find a packet on IPv4 or IPv6 socket, return -1. */
   if ((l = recvmsg(s->s6, &msg, 0)) < 0)
     if ((l = recvmsg(s->s4, &msg, 0)) < 0)
       return -1;
+
+  /* Convert source address to IPv6 if it already isn't */
   if (src && src->sin6_family != AF_INET6)
     {
-      /* XXX - convert */
-      DEBUG("got non-AF_INET6 packet");
-      return -1;
-    }
-  struct cmsghdr *h;
-#ifdef USE_IP_REVCDSTADDR
-  struct in6_addr dst_buf;
-#endif /* USE_IP_REVCDSTADDR */
+      struct sockaddr_in *sa = (struct sockaddr_in *)src;
+      struct in_addr a = sa->sin_addr;
+      uint16_t port = sa->sin_port;
 
-  if (dst)
-    memset(dst, 0, sizeof(*dst));
+      memset(src, 0, sizeof(*src));
+      IN_ADDR_TO_MAPPED_IN6_ADDR(&a, &src->sin6_addr);
+      src->sin6_port = port;
+      src->sin6_family = AF_INET6;
+    }
+
+  /* If we don't care about destination address, we're already done */
+  if (!dst)
+    return l;
+
+  memset(dst, 0, sizeof(*dst));
+  struct cmsghdr *h;
+  /* Iterate through the message headers looking for destination
+   * address, and if finding it, return it (in dst, as V4 mapped if
+   * need be). */
   for (h = CMSG_FIRSTHDR(&msg); h;
        h = CMSG_NXTHDR(&msg, h))
     if (h->cmsg_level == IPPROTO_IPV6
@@ -194,22 +210,31 @@ ssize_t udp46_recv(udp46 s,
         dst->sin6_family = AF_INET6;
         dst->sin6_addr = ipi6->ipi6_addr;
         dst->sin6_scope_id = ipi6->ipi6_ifindex;
+        return l;
       }
-#ifdef USE_IP_REVCDSTADDR
+#ifdef IP_REVCDSTADDR
     else if (h->cmsg_level == IPPROTO_IP
              && h->cmsg_type == IP_RECVDSTADDR)
       {
         struct in_addr *a = (struct in_addr *)CMSG_DATA(h);
-        IN_ADDR_TO_MAPPED_IN6_ADDR(a, dst);
+        IN_ADDR_TO_MAPPED_IN6_ADDR(a, &dst->sin6_addr);
+        dst->sin6_family = AF_INET6;
+        return l;
       }
-#endif /* USE_IP_REVCDSTADDR */
-  if (dst->sin6_family != AF_INET6)
-    {
-      /* By default, nothing happens if the option is AWOL. */
-      DEBUG("unknown destination");
-      return -1;
-    }
-  return l;
+#endif /* IP_REVCDSTADDR */
+#ifdef IP_PKTINFO
+    else if (h->cmsg_level == IPPROTO_IP
+             && h->cmsg_type == IP_PKTINFO)
+      {
+        struct in_pktinfo *ipi = (struct in_pktinfo *) CMSG_DATA(h);
+        IN_ADDR_TO_MAPPED_IN6_ADDR(&ipi->ipi_addr, &dst->sin6_addr);
+        dst->sin6_family = AF_INET6;
+        return l;
+      }
+#endif /* IP_PKTINFO */
+  /* By default, nothing happens if the option is AWOL. */
+  DEBUG("unknown destination");
+  return -1;
 }
 
 int udp46_send_iovec(udp46 s,
@@ -217,25 +242,72 @@ int udp46_send_iovec(udp46 s,
                      const struct sockaddr_in6 *dst,
                      struct iovec *iov, int iov_len)
 {
-  /* XXX - IPv4 path */
-  struct in6_pktinfo ipi6 = {.ipi6_addr = src->sin6_addr,
-                              .ipi6_ifindex = src->sin6_scope_id };
-  uint8_t c[CMSG_SPACE(sizeof(ipi6))];
+  if (!src || src->sin6_family != AF_INET6 ||
+      !dst || dst->sin6_family != AF_INET6)
+    return -1;
+  if (!IN6_IS_ADDR_V4MAPPED(&src->sin6_addr)
+      != !IN6_IS_ADDR_V4MAPPED(&dst->sin6_addr))
+    return -1;
+  uint8_t c[1000];
   struct msghdr msg = {
     .msg_iov = iov,
     .msg_iovlen = iov_len,
-    .msg_name = (void *)dst,
-    .msg_namelen = sizeof(*dst),
     .msg_flags = 0,
-    .msg_control = c,
-    .msg_controllen = sizeof(c)
+    .msg_control = c
   };
   struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
-  cmsg->cmsg_level = IPPROTO_IPV6;
-  cmsg->cmsg_type = IPV6_PKTINFO;
-  cmsg->cmsg_len = CMSG_LEN(sizeof(ipi6));
-  *((struct in6_pktinfo *)CMSG_DATA(cmsg)) = ipi6;
-  return sendmsg(s->s6, &msg, 0);
+  struct sockaddr_in sin;
+  int sock = -1;
+
+  if (IN6_IS_ADDR_V4MAPPED(&src->sin6_addr))
+    {
+      /* Convert the destination address */
+      memset(&sin, 0, sizeof(sin));
+      MAPPED_IN6_ADDR_TO_IN_ADDR(dst, &sin.sin_addr);
+      sin.sin_family = AF_INET;
+      sin.sin_port = dst->sin6_port;
+
+      /* Deal with source address */
+      msg.msg_name = (void *)&sin;
+      msg.msg_namelen = sizeof(sin);
+
+      cmsg->cmsg_level = IPPROTO_IP;
+#ifdef IP_PKTINFO
+      struct in_pktinfo *ipi = (struct in_pktinfo *)CMSG_DATA(cmsg);
+      memset(ipi, 0, sizeof(*ipi));
+      MAPPED_IN6_ADDR_TO_IN_ADDR(src, &ipi->ipi_spec_dst);
+      cmsg->cmsg_type = IP_PKTINFO;
+      cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi));
+#else
+#ifdef IP_SENDSRCADDR
+      struct in_addr *in = (struct in_addr *)CMSG_DATA(cmsg);
+      MAPPED_IN6_ADDR_TO_IN_ADDR(src, in);
+      cmsg->cmsg_type = IP_SENDSRCADDR;
+      cmsg->cmsg_len = CMSG_LEN(sizeof(*in));
+#else
+      cmsg = NULL; /* uh oh. definitely in best effort category now.. */
+#endif /* IP_SENDSRCADDR */
+#endif /* IP_PKTINFO */
+      sock = s->s4;
+    }
+  else
+    {
+      /* Use destination address as-is */
+      msg.msg_name = (void *)dst;
+      msg.msg_namelen = sizeof(*dst);
+
+      /* Add source address header */
+      struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+      memset(ipi6, 0, sizeof(*ipi6));
+      ipi6->ipi6_addr = src->sin6_addr;
+      ipi6->ipi6_ifindex = src->sin6_scope_id;
+      cmsg->cmsg_level = IPPROTO_IPV6;
+      cmsg->cmsg_type = IPV6_PKTINFO;
+      cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi6));
+      sock = s->s6;
+    }
+  msg.msg_controllen = cmsg ? cmsg->cmsg_len : 0;
+  return sendmsg(sock, &msg, 0);
 }
 
 
