@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 13:53:46 2014 mstenber
- * Edit time:     100 min
+ * Last modified: Thu May 15 19:33:41 2014 mstenber
+ * Edit time:     110 min
  *
  */
 
@@ -140,6 +140,8 @@ void pcp_proxy_add_server(struct in6_addr *prefix, int plen,
   s->plen = plen;
   s->address = *address;
   list_add(&s->lh, &servers);
+  DEBUG("added server %s for %s/%d",
+        SOCKADDR_IN6_REPR(&s->address), IN6_ADDR_REPR(&s->prefix), s->plen);
 }
 
 bool pcp_proxy_add_server_string(const char *string,
@@ -182,8 +184,9 @@ bool pcp_proxy_add_server_string(const char *string,
     }
   struct sockaddr_in6 sin6;
   memset(&sin6, 0, sizeof(sin6));
+  sin6.sin6_family = AF_INET6;
   sin6.sin6_addr = s;
-  sin6.sin6_port = ntohs(PCP_SERVER_PORT);
+  sin6.sin6_port = htons(PCP_SERVER_PORT);
   pcp_proxy_add_server(&p, plen, &sin6);
   free(bases);
   return true;
@@ -221,14 +224,17 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
 {
   pcp_common_header h = (pcp_common_header) data;
 
+  DEBUG("pcp_proxy_handle_from_client: %s->%s %d bytes",
+        SOCKADDR_IN6_REPR(src), SOCKADDR_IN6_REPR(dst), data_len);
   if (data_len < (int)sizeof(*h))
     {
       DEBUG("too short input from client (%d<%d)", data_len, (int)sizeof(*h));
       return;
     }
-  if (memcmp(src, &h->address, sizeof(*src)))
+  if (memcmp(&src->sin6_addr, &h->address, sizeof(src->sin6_addr)))
     {
-      DEBUG("source address and internal address mismatch");
+      DEBUG("source address and internal address mismatch: %s<>%s",
+            SOCKADDR_IN6_REPR(src), IN6_ADDR_REPR(&h->address));
       return;
     }
   if (h->version != PCP_VERSION_RFC)
@@ -257,8 +263,9 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
           DEBUG("too short peer/map");
           return;
         }
+      break;
     default:
-      DEBUG("unknown opcode");
+      DEBUG("unknown opcode:%d", h->opcode);
       return;
     }
 
@@ -279,7 +286,7 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
   };
 
   h->address = dst->sin6_addr;
-  pcp_proxy_send_to_server(dst, &s->address,
+  pcp_proxy_send_to_server(NULL, &s->address,
                            data, data_len,
                            &tpo, sizeof(tpo));
 }
@@ -290,6 +297,8 @@ void pcp_proxy_handle_from_server(struct sockaddr_in6 *src,
 {
   pcp_common_header h = (pcp_common_header) data;
 
+  DEBUG("pcp_proxy_handle_from_server: %s->%s %d bytes",
+        SOCKADDR_IN6_REPR(src), SOCKADDR_IN6_REPR(dst), data_len);
   if (data_len < (int)sizeof(*h))
     {
       DEBUG("too short input from server (%d<%d)", data_len, (int)sizeof(*h));

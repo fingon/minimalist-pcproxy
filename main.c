@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Thu May 15 14:14:26 2014 mstenber
- * Edit time:     152 min
+ * Last modified: Thu May 15 18:10:24 2014 mstenber
+ * Edit time:     153 min
  *
  */
 
@@ -125,7 +125,7 @@ void pcp_proxy_send_to_server(struct sockaddr_in6 *src,
     perror("sendmsg");
 }
 
-static void do_help(const char *p, const char *reason)
+static void help_and_exit(const char *p, const char *reason)
 {
   if (reason)
     printf("%s.\n\n", reason);
@@ -143,8 +143,6 @@ int main(int argc, char **argv)
       perror("uloop_init");
       abort();
     }
-  pcp_proxy_init();
-  init_sockets();
   /* XXX - add support for parsing interfaces too and use them for
    * announces on reset_epoch */
   while ((c = getopt(argc, argv, "h"))>0)
@@ -152,7 +150,7 @@ int main(int argc, char **argv)
       switch (c)
         {
         case 'h':
-          do_help(argv[0], NULL);
+          help_and_exit(argv[0], NULL);
         }
     }
   /* Parse command leftover command line arguments. Assume they're of
@@ -160,15 +158,14 @@ int main(int argc, char **argv)
    * format. */
   int i;
   if (optind == argc)
-    do_help(argv[0], "One server is required");
+    help_and_exit(argv[0], "One server is required");
+  pcp_proxy_init();
+  init_sockets();
   for (i = optind; i < argc; i++)
     {
       char err[1024];
       if (!pcp_proxy_add_server_string(argv[i], err, sizeof(err)))
-        {
-          do_help(argv[0], err);
-          exit(1);
-        }
+        help_and_exit(argv[0], err);
     }
   uloop_run();
   uloop_done();

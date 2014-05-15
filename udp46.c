@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 18:06:05 2014 mstenber
- * Edit time:     56 min
+ * Last modified: Thu May 15 19:35:22 2014 mstenber
+ * Edit time:     86 min
  *
  */
 
@@ -49,7 +49,7 @@ do {                                            \
   *((uint32_t *)a) = ((uint32_t *)a6)[3];       \
  } while (0)
 
-static int init_listening_socket(int pf, int port)
+static int init_listening_socket(int pf, uint16_t port)
 {
   int on = 1;
   int s = socket(pf, SOCK_DGRAM, 0);
@@ -97,10 +97,9 @@ static int init_listening_socket(int pf, int port)
           ss_len = sizeof(*sin);
         }
 
-      if (bind(s, (struct sockaddr *)&ss, ss_len) < 0)
-        perror("bind");
-      else
+      if (bind(s, (struct sockaddr *)&ss, ss_len) >= 0)
         return s;
+      /* Don't return errors on bind, due to it being spammy when probing */
     }
   return - 1;
 }
@@ -125,13 +124,17 @@ udp46 udp46_create(uint16_t port)
        * getting similar, and then start incrementing from there. This
        * for loop is simpler and stupider, though..
        */
-      for (port = 1000; port > 0 && (fd1 < 0 || fd2 < 0); port++)
+      for (port = 1024; port; port++)
         {
           if (fd1 >= 0)
             close(fd1);
           fd1 = init_listening_socket(PF_INET, port);
           if (fd1 >= 0)
-            fd2 = init_listening_socket(PF_INET6, port);
+            {
+              fd2 = init_listening_socket(PF_INET6, port);
+              if (fd2 >= 0)
+                break;
+            }
         }
     }
   if (fd1 >= 0 && fd2 >= 0)
@@ -139,6 +142,7 @@ udp46 udp46_create(uint16_t port)
       s->s4 = fd1;
       s->s6 = fd2;
       s->port = port;
+      DEBUG("udp46_create succeeded at port %d", port);
       return s;
     }
   if (fd1 >= 0)
@@ -246,71 +250,89 @@ int udp46_send_iovec(udp46 s,
                      const struct sockaddr_in6 *dst,
                      struct iovec *iov, int iov_len)
 {
-  if (!src || src->sin6_family != AF_INET6 ||
-      !dst || dst->sin6_family != AF_INET6)
-    return -1;
-  if (!IN6_IS_ADDR_V4MAPPED(&src->sin6_addr)
+  if (src && src->sin6_family != AF_INET6)
+    {
+      DEBUG("src wrong: %s", SOCKADDR_IN6_REPR(src));
+      return -1;
+    }
+  if (!dst || dst->sin6_family != AF_INET6)
+    {
+      DEBUG("dst wrong: %s", SOCKADDR_IN6_REPR(dst));
+      return -1;
+    }
+  if (src && !IN6_IS_ADDR_V4MAPPED(&src->sin6_addr)
       != !IN6_IS_ADDR_V4MAPPED(&dst->sin6_addr))
-    return -1;
+    {
+      DEBUG("IPv4 <> IPv6 traffic not allowed");
+      return -1;
+    }
   uint8_t c[1000];
   struct msghdr msg = {
     .msg_iov = iov,
     .msg_iovlen = iov_len,
     .msg_flags = 0,
-    .msg_control = c
+    .msg_control = c,
+    .msg_controllen = sizeof(c)
   };
   struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
   struct sockaddr_in sin;
   int sock = -1;
 
-  if (IN6_IS_ADDR_V4MAPPED(&src->sin6_addr))
+  if (IN6_IS_ADDR_V4MAPPED(&dst->sin6_addr))
     {
       /* Convert the destination address */
       memset(&sin, 0, sizeof(sin));
       MAPPED_IN6_ADDR_TO_IN_ADDR(dst, &sin.sin_addr);
       sin.sin_family = AF_INET;
       sin.sin_port = dst->sin6_port;
-
-      /* Deal with source address */
+      sock = s->s4;
       msg.msg_name = (void *)&sin;
       msg.msg_namelen = sizeof(sin);
-
-      cmsg->cmsg_level = IPPROTO_IP;
-#ifdef IP_PKTINFO
-      struct in_pktinfo *ipi = (struct in_pktinfo *)CMSG_DATA(cmsg);
-      memset(ipi, 0, sizeof(*ipi));
-      MAPPED_IN6_ADDR_TO_IN_ADDR(src, &ipi->ipi_spec_dst);
-      cmsg->cmsg_type = IP_PKTINFO;
-      cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi));
-#else
-#ifdef IP_SENDSRCADDR
-      struct in_addr *in = (struct in_addr *)CMSG_DATA(cmsg);
-      MAPPED_IN6_ADDR_TO_IN_ADDR(src, in);
-      cmsg->cmsg_type = IP_SENDSRCADDR;
-      cmsg->cmsg_len = CMSG_LEN(sizeof(*in));
-#else
-      cmsg = NULL; /* uh oh. definitely in best effort category now.. */
-#endif /* IP_SENDSRCADDR */
-#endif /* IP_PKTINFO */
-      sock = s->s4;
     }
   else
     {
       /* Use destination address as-is */
       msg.msg_name = (void *)dst;
       msg.msg_namelen = sizeof(*dst);
-
-      /* Add source address header */
-      struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
-      memset(ipi6, 0, sizeof(*ipi6));
-      ipi6->ipi6_addr = src->sin6_addr;
-      ipi6->ipi6_ifindex = src->sin6_scope_id;
-      cmsg->cmsg_level = IPPROTO_IPV6;
-      cmsg->cmsg_type = IPV6_PKTINFO;
-      cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi6));
       sock = s->s6;
     }
-  msg.msg_controllen = cmsg ? cmsg->cmsg_len : 0;
+  /* Deal with source address */
+  cmsg->cmsg_len = 0;
+  if (src)
+    {
+      if (IN6_IS_ADDR_V4MAPPED(&dst->sin6_addr))
+        {
+          cmsg->cmsg_level = IPPROTO_IP;
+#ifdef IP_PKTINFO
+          struct in_pktinfo *ipi = (struct in_pktinfo *)CMSG_DATA(cmsg);
+          memset(ipi, 0, sizeof(*ipi));
+          MAPPED_IN6_ADDR_TO_IN_ADDR(src, &ipi->ipi_spec_dst);
+          cmsg->cmsg_type = IP_PKTINFO;
+          cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi));
+#else
+#ifdef IP_SENDSRCADDR
+          struct in_addr *in = (struct in_addr *)CMSG_DATA(cmsg);
+          MAPPED_IN6_ADDR_TO_IN_ADDR(src, in);
+          cmsg->cmsg_type = IP_SENDSRCADDR;
+          cmsg->cmsg_len = CMSG_LEN(sizeof(*in));
+#else
+          cmsg = NULL; /* uh oh. definitely in best effort category now.. */
+#endif /* IP_SENDSRCADDR */
+#endif /* IP_PKTINFO */
+        }
+      else
+        {
+          /* Add source address header */
+          struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+          memset(ipi6, 0, sizeof(*ipi6));
+          ipi6->ipi6_addr = src->sin6_addr;
+          ipi6->ipi6_ifindex = src->sin6_scope_id;
+          cmsg->cmsg_level = IPPROTO_IPV6;
+          cmsg->cmsg_type = IPV6_PKTINFO;
+          cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi6));
+        }
+    }
+  msg.msg_controllen = cmsg->cmsg_len;
   return sendmsg(sock, &msg, 0);
 }
 
