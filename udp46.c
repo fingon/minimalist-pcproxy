@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 19:35:22 2014 mstenber
- * Edit time:     86 min
+ * Last modified: Thu May 15 19:52:34 2014 mstenber
+ * Edit time:     95 min
  *
  */
 
@@ -84,6 +84,7 @@ static int init_listening_socket(int pf, uint16_t port)
         {
           struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
           memset(sin6, 0, sizeof(*sin6));
+          sin6->sin6_len = sizeof(*sin6);
           sin6->sin6_family = AF_INET6;
           sin6->sin6_port = htons(port);
           ss_len = sizeof(*sin6);
@@ -194,6 +195,7 @@ ssize_t udp46_recv(udp46 s,
 
       memset(src, 0, sizeof(*src));
       IN_ADDR_TO_MAPPED_IN6_ADDR(&a, &src->sin6_addr);
+      src->sin6_len = sizeof(*src);
       src->sin6_port = port;
       src->sin6_family = AF_INET6;
     }
@@ -215,6 +217,7 @@ ssize_t udp46_recv(udp46 s,
         && h->cmsg_type == IPV6_PKTINFO)
       {
         struct in6_pktinfo *ipi6 = (struct in6_pktinfo *)CMSG_DATA(h);
+        dst->sin6_len = sizeof(*dst);
         dst->sin6_family = AF_INET6;
         dst->sin6_addr = ipi6->ipi6_addr;
         dst->sin6_scope_id = ipi6->ipi6_ifindex;
@@ -226,6 +229,7 @@ ssize_t udp46_recv(udp46 s,
       {
         struct in_addr *a = (struct in_addr *)CMSG_DATA(h);
         IN_ADDR_TO_MAPPED_IN6_ADDR(a, &dst->sin6_addr);
+        dst->sin6_len = sizeof(*dst);
         dst->sin6_family = AF_INET6;
         return l;
       }
@@ -236,6 +240,7 @@ ssize_t udp46_recv(udp46 s,
       {
         struct in_pktinfo *ipi = (struct in_pktinfo *) CMSG_DATA(h);
         IN_ADDR_TO_MAPPED_IN6_ADDR(&ipi->ipi_addr, &dst->sin6_addr);
+        dst->sin6_len = sizeof(*dst);
         dst->sin6_family = AF_INET6;
         return l;
       }
@@ -285,9 +290,9 @@ int udp46_send_iovec(udp46 s,
       MAPPED_IN6_ADDR_TO_IN_ADDR(dst, &sin.sin_addr);
       sin.sin_family = AF_INET;
       sin.sin_port = dst->sin6_port;
-      sock = s->s4;
       msg.msg_name = (void *)&sin;
       msg.msg_namelen = sizeof(sin);
+      sock = s->s4;
     }
   else
     {

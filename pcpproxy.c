@@ -6,7 +6,7 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 19:33:41 2014 mstenber
+ * Last modified: Thu May 15 19:51:41 2014 mstenber
  * Edit time:     110 min
  *
  */
@@ -184,6 +184,7 @@ bool pcp_proxy_add_server_string(const char *string,
     }
   struct sockaddr_in6 sin6;
   memset(&sin6, 0, sizeof(sin6));
+  sin6.sin6_len = sizeof(sin6);
   sin6.sin6_family = AF_INET6;
   sin6.sin6_addr = s;
   sin6.sin6_port = htons(PCP_SERVER_PORT);
