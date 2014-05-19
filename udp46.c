@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Mon May 19 11:51:03 2014 mstenber
- * Edit time:     106 min
+ * Last modified: Mon May 19 13:15:47 2014 mstenber
+ * Edit time:     108 min
  *
  */
 
@@ -36,20 +36,7 @@ struct udp46_t {
   uint16_t port;
 };
 
-#define IN_ADDR_TO_MAPPED_IN6_ADDR(a, a6)       \
-do {                                            \
-  memset(a6, 0, sizeof(*(a6)));                 \
-  (a6)->s6_addr[10] = 0xff;                     \
-  (a6)->s6_addr[11] = 0xff;                     \
-  ((uint32_t *)a6)[3] = *((uint32_t *)a);       \
- } while (0)
-
-#define MAPPED_IN6_ADDR_TO_IN_ADDR(a6, a)       \
-do {                                            \
-  *((uint32_t *)a) = ((uint32_t *)a6)[3];       \
- } while (0)
-
-static int init_listening_socket(int pf, uint16_t port)
+static int init_listening_socket(int pf, uint16_t port, uint16_t oport)
 {
   int on = 1;
   int s = socket(pf, SOCK_DGRAM, 0);
@@ -76,7 +63,8 @@ static int init_listening_socket(int pf, uint16_t port)
   else if (pf == PF_INET6
            && setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) < 0)
     perror("setsockopt IPV6_V6ONLY");
-  else if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
+  else if (oport
+           && setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
     perror("setsockopt SO_REUSEADDR");
   else
     {
@@ -112,8 +100,8 @@ udp46 udp46_create(uint16_t port)
     return NULL;
   if (port)
     {
-      fd1 = init_listening_socket(PF_INET, port);
-      fd2 = init_listening_socket(PF_INET6, port);
+      fd1 = init_listening_socket(PF_INET, port, port);
+      fd2 = init_listening_socket(PF_INET6, port, port);
     }
   else
     {
@@ -126,10 +114,10 @@ udp46 udp46_create(uint16_t port)
         {
           if (fd1 >= 0)
             close(fd1);
-          fd1 = init_listening_socket(PF_INET, port);
+          fd1 = init_listening_socket(PF_INET, port, 0);
           if (fd1 >= 0)
             {
-              fd2 = init_listening_socket(PF_INET6, port);
+              fd2 = init_listening_socket(PF_INET6, port, 0);
               if (fd2 >= 0)
                 break;
             }

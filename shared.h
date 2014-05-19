@@ -6,7 +6,7 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 19:28:48 2014 mstenber
- * Last modified: Thu May 15 20:09:09 2014 mstenber
+ * Last modified: Mon May 19 12:34:45 2014 mstenber
  * Edit time:     15 min
  *
  */
@@ -76,6 +76,19 @@ static inline void sockaddr_in6_set(struct sockaddr_in6 *sin6,
     sin6->sin6_addr = *a6;
   sin6->sin6_port = htons(port);
 }
+
+#define IN_ADDR_TO_MAPPED_IN6_ADDR(a, a6)       \
+do {                                            \
+  memset(a6, 0, sizeof(*(a6)));                 \
+  (a6)->s6_addr[10] = 0xff;                     \
+  (a6)->s6_addr[11] = 0xff;                     \
+  ((uint32_t *)a6)[3] = *((uint32_t *)a);       \
+ } while (0)
+
+#define MAPPED_IN6_ADDR_TO_IN_ADDR(a6, a)       \
+do {                                            \
+  *((uint32_t *)a) = ((uint32_t *)a6)[3];       \
+ } while (0)
 
 #ifndef NDEBUG
 
