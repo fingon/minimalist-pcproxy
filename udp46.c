@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Thu May 15 12:33:19 2014 mstenber
- * Last modified: Thu May 15 20:08:41 2014 mstenber
- * Edit time:     99 min
+ * Last modified: Mon May 19 11:51:03 2014 mstenber
+ * Edit time:     106 min
  *
  */
 
@@ -274,7 +274,7 @@ int udp46_send_iovec(udp46 s,
     {
       /* Convert the destination address */
       memset(&sin, 0, sizeof(sin));
-      MAPPED_IN6_ADDR_TO_IN_ADDR(dst, &sin.sin_addr);
+      MAPPED_IN6_ADDR_TO_IN_ADDR(&dst->sin6_addr, &sin.sin_addr);
       sin.sin_family = AF_INET;
       sin.sin_port = dst->sin6_port;
       msg.msg_name = (void *)&sin;
@@ -298,17 +298,17 @@ int udp46_send_iovec(udp46 s,
 #ifdef IP_PKTINFO
           struct in_pktinfo *ipi = (struct in_pktinfo *)CMSG_DATA(cmsg);
           memset(ipi, 0, sizeof(*ipi));
-          MAPPED_IN6_ADDR_TO_IN_ADDR(src, &ipi->ipi_spec_dst);
+          MAPPED_IN6_ADDR_TO_IN_ADDR(&src->sin6_addr, &ipi->ipi_spec_dst);
           cmsg->cmsg_type = IP_PKTINFO;
           cmsg->cmsg_len = CMSG_LEN(sizeof(*ipi));
 #else
 #ifdef IP_SENDSRCADDR
           struct in_addr *in = (struct in_addr *)CMSG_DATA(cmsg);
-          MAPPED_IN6_ADDR_TO_IN_ADDR(src, in);
+          MAPPED_IN6_ADDR_TO_IN_ADDR(&src->sin6_addr, in);
           cmsg->cmsg_type = IP_SENDSRCADDR;
           cmsg->cmsg_len = CMSG_LEN(sizeof(*in));
 #else
-          cmsg = NULL; /* uh oh. definitely in best effort category now.. */
+#error "Don't know how to set IPv4 source address, fix me"
 #endif /* IP_SENDSRCADDR */
 #endif /* IP_PKTINFO */
         }
