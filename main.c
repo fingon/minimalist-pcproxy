@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Thu May 15 18:10:24 2014 mstenber
- * Edit time:     153 min
+ * Last modified: Mon May 19 11:42:58 2014 mstenber
+ * Edit time:     157 min
  *
  */
 
@@ -43,6 +43,7 @@ void fd_callback(struct uloop_fd *u, unsigned int events)
   for (i = 0; i < 4; i++)
     if (u == &ufds[i])
       {
+        DEBUG("fd callback for socket #%d", i);
         if (i < 2)
           {
             ssize_t l = udp46_recv(clients, &srcsa, &dstsa, data, sizeof(data));
@@ -102,7 +103,9 @@ void pcp_proxy_send_to_client(struct sockaddr_in6 *src,
                               struct sockaddr_in6 *dst,
                               void *data, int data_len)
 {
-  DEBUG("pcp_proxy_send_to_client");
+  DEBUG("pcp_proxy_send_to_client %s->%s %d bytes",
+        SOCKADDR_IN6_REPR(src), SOCKADDR_IN6_REPR(dst),
+        data_len);
   struct iovec iov = {.iov_base = data,
                       .iov_len = data_len };
   if (udp46_send_iovec(servers, src, dst, &iov, 1) < 0)
@@ -120,8 +123,10 @@ void pcp_proxy_send_to_server(struct sockaddr_in6 *src,
     {.iov_base = data2,
      .iov_len = data_len2 }
   };
-  DEBUG("pcp_proxy_send_to_server");
-  if (udp46_send_iovec(servers, src, dst, iov, 2) < 0)
+  DEBUG("pcp_proxy_send_to_server %s->%s %d+%d bytes",
+        SOCKADDR_IN6_REPR(src), SOCKADDR_IN6_REPR(dst),
+        data_len, data_len2);
+  if (udp46_send_iovec(clients, src, dst, iov, 2) < 0)
     perror("sendmsg");
 }
 
