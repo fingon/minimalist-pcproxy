@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May 19 13:10:26 2014 mstenber
- * Edit time:     165 min
+ * Last modified: Mon May 19 13:40:00 2014 mstenber
+ * Edit time:     116 min
  *
  */
 
@@ -381,6 +381,10 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
     {
       req->third_party = true;
     }
+  /*
+   * XXX - this won't work cross-AF (e.g. IPv6 server, but proxy in
+   * IPv4). Who would do such a thing, though..
+   */
   h->int_address = dst->sin6_addr;
   struct sockaddr_in6 sin6;
   sockaddr_in6_set(&sin6, &dst->sin6_addr, 0); /* port ignored in send */
