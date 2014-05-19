@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Thu May 15 20:30:05 2014 mstenber
- * Edit time:     111 min
+ * Last modified: Mon May 19 11:44:53 2014 mstenber
+ * Edit time:     114 min
  *
  */
 
@@ -32,6 +32,7 @@
 
 typedef struct {
   struct sockaddr_in6 src;
+  struct sockaddr_in6 dst;
   uint8_t nonce[PCP_NONCE_LENGTH];
   time_t t;
 } pcp_proxy_request_s, *pcp_proxy_request;
@@ -92,6 +93,7 @@ static pcp_proxy_request get_request(pcp_common_header h)
 }
 
 static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
+                                          struct sockaddr_in6 *dst,
                                           pcp_common_header h)
 {
   int i;
@@ -122,6 +124,7 @@ static pcp_proxy_request allocate_request(struct sockaddr_in6 *src,
     return NULL;
   breq->t = now;
   breq->src = *src;
+  breq->dst = *dst;
   memcpy(breq->nonce, nonce, PCP_NONCE_LENGTH);
   return breq;
 }
@@ -296,7 +299,7 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
     }
 
 
-  pcp_proxy_request req = allocate_request(src, h);
+  pcp_proxy_request req = allocate_request(src, dst, h);
   if (!req)
     {
       DEBUG("too busy or resend -> ignoring");
@@ -414,10 +417,10 @@ void pcp_proxy_handle_from_server(struct sockaddr_in6 *src,
   s->client_time = curr_client_time;
   if (!valid)
     reset_epoch();
-  *epochp = get_time() - our_epoch;
+  *epochp = htonl(get_time() - our_epoch);
 
   /* XXX override lifetimes if we care to? */
-  pcp_proxy_send_to_client(dst, &req->src, data, data_len - sizeof(*tpo));
+  pcp_proxy_send_to_client(&req->dst, &req->src, data, data_len - sizeof(*tpo));
 
   /* No longer needed request */
   req->t = 0;
