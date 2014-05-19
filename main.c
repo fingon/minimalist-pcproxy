@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Mon May 19 11:42:58 2014 mstenber
- * Edit time:     157 min
+ * Last modified: Mon May 19 13:14:03 2014 mstenber
+ * Edit time:     161 min
  *
  */
 
@@ -71,16 +71,14 @@ void fd_callback(struct uloop_fd *u, unsigned int events)
   DEBUG("invalid callback?!?");
 }
 
-void init_sockets()
+void init_sockets(int server_port)
 {
-  /* TRY to take client port, but failing that, any port should work. */
-  clients = udp46_create(PCP_CLIENT_PORT);
-  if (!clients)
-    clients = udp46_create(0);
+  /* Any port should work */
+  clients = udp46_create(0);
   assert(clients);
 
   /* We insist on server port, though. */
-  servers = udp46_create(PCP_SERVER_PORT);
+  servers = udp46_create(server_port);
   assert(servers);
 
   int i;
@@ -134,7 +132,7 @@ static void help_and_exit(const char *p, const char *reason)
 {
   if (reason)
     printf("%s.\n\n", reason);
-  printf("Usage: %s S [S [S ..]]\n", p);
+  printf("Usage: %s [-h] [-p server-port] S [S [S ..]]\n", p);
   printf(" Where S = <source prefix>/<source prefix length>=<server>\n");
   exit(1);
 }
@@ -142,6 +140,7 @@ static void help_and_exit(const char *p, const char *reason)
 int main(int argc, char **argv)
 {
   int c;
+  int server_port = PCP_SERVER_PORT;
 
   if (uloop_init() < 0)
     {
@@ -150,12 +149,15 @@ int main(int argc, char **argv)
     }
   /* XXX - add support for parsing interfaces too and use them for
    * announces on reset_epoch */
-  while ((c = getopt(argc, argv, "h"))>0)
+  while ((c = getopt(argc, argv, "hp:"))>0)
     {
       switch (c)
         {
         case 'h':
           help_and_exit(argv[0], NULL);
+        case 'p':
+          server_port = atoi(optarg);
+          break;
         }
     }
   /* Parse command leftover command line arguments. Assume they're of
@@ -165,7 +167,7 @@ int main(int argc, char **argv)
   if (optind == argc)
     help_and_exit(argv[0], "One server is required");
   pcp_proxy_init();
-  init_sockets();
+  init_sockets(server_port);
   for (i = optind; i < argc; i++)
     {
       char err[1024];
