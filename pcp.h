@@ -6,7 +6,7 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 17:22:26 2014 mstenber
- * Last modified: Thu May 15 20:28:20 2014 mstenber
+ * Last modified: Mon May 19 13:03:38 2014 mstenber
  * Edit time:     9 min
  *
  */
@@ -39,7 +39,7 @@ typedef struct __packed {
   uint8_t opcode;
   uint16_t reserved;
   uint32_t lifetime;
-  struct in6_addr address;
+  struct in6_addr int_address;
 } pcp_common_header_s, *pcp_common_header;
 
 typedef struct __packed {
@@ -52,7 +52,7 @@ typedef struct __packed {
 
 typedef struct __packed {
   pcp_option_s po;
-  struct in6_addr address;
+  struct in6_addr tp_address;
 } pcp_thirdparty_option_s, *pcp_thirdparty_option;
 
 typedef struct __packed {
