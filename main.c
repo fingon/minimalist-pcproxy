@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 16:53:27 2014 mstenber
- * Last modified: Mon May 19 13:14:03 2014 mstenber
- * Edit time:     161 min
+ * Last modified: Mon Jun  2 18:45:50 2014 mstenber
+ * Edit time:     162 min
  *
  */
 
@@ -124,6 +124,11 @@ void pcp_proxy_send_to_server(struct sockaddr_in6 *src,
   DEBUG("pcp_proxy_send_to_server %s->%s %d+%d bytes",
         SOCKADDR_IN6_REPR(src), SOCKADDR_IN6_REPR(dst),
         data_len, data_len2);
+  /* Ignore source address if it's linklocal - we're better off doing
+   * normal SAS. Even if destination is linklocal, it is probably on
+   * different interface. */
+  if (src && IN6_IS_ADDR_LINKLOCAL(&src->sin6_addr))
+    src = NULL;
   if (udp46_send_iovec(clients, src, dst, iov, 2) < 0)
     perror("sendmsg");
 }
