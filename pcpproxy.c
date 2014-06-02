@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon May 19 13:40:00 2014 mstenber
- * Edit time:     116 min
+ * Last modified: Mon Jun  2 18:58:26 2014 mstenber
+ * Edit time:     120 min
  *
  */
 
@@ -328,13 +328,6 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       DEBUG("wrong PCP version:%d", h->version);
       return;
     }
-  /* XXX - handle client-originated ANNOUNCE locally */
-  pcp_proxy_server s = determine_server_for_source(&src->sin6_addr);
-  if (!s)
-    {
-      DEBUG("no PCP server found");
-      return;
-    }
   switch (h->opcode)
     {
     case PCP_OPCODE_ANNOUNCE:
@@ -354,6 +347,14 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       return;
     }
 
+  pcp_thirdparty_option tpop = find_third_party_option(data, data_len);
+  struct in6_addr *osrc = tpop ? &tpop->tp_address : &src->sin6_addr;
+  pcp_proxy_server s = determine_server_for_source(osrc);
+  if (!s)
+    {
+      DEBUG("no PCP server found");
+      return;
+    }
 
   pcp_proxy_request req = allocate_request(src, dst, h);
   if (!req)
@@ -362,7 +363,6 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       return;
     }
 
-  pcp_thirdparty_option tpop = find_third_party_option(data, data_len);
   int tpop_len = 0;
   pcp_thirdparty_option_s tpo = {
     .po = {
