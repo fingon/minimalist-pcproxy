@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon Jun  2 18:58:26 2014 mstenber
- * Edit time:     120 min
+ * Last modified: Mon Jun  2 19:26:44 2014 mstenber
+ * Edit time:     131 min
  *
  */
 
@@ -254,6 +254,31 @@ bool pcp_proxy_add_server_string(const char *string,
 }
 
 
+static int determine_local_address(const struct sockaddr_in6 *dst,
+                                   struct in6_addr *result)
+{
+  int s = socket(PF_INET6, SOCK_DGRAM, 0);
+  struct sockaddr_in6 sin6;
+  socklen_t sin6_len = sizeof(sin6);
+
+  if (s < 0)
+    return -1;
+  if (connect(s, (struct sockaddr *)dst, sizeof(*dst)) && errno != EINPROGRESS)
+    goto err;
+  if (getsockname(s, (struct sockaddr *)&sin6, &sin6_len))
+    goto err;
+    if (sin6.sin6_family == AF_INET6)
+    {
+      *result = sin6.sin6_addr;
+      close(s);
+      return 0;
+    }
+ err:
+  close(s);
+  return - 1;
+}
+
+
 static pcp_proxy_server determine_server_for_source(struct in6_addr *src)
 {
   pcp_proxy_server s;
@@ -381,13 +406,22 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
     {
       req->third_party = true;
     }
-  /*
-   * XXX - this won't work cross-AF (e.g. IPv6 server, but proxy in
-   * IPv4). Who would do such a thing, though..
-   */
-  h->int_address = dst->sin6_addr;
+
+  /* Determine whether our current source address is acceptable, or if
+   * we should do SA for the server address and pick new one. For the
+   * time being, only linklocal source address is considered
+   * non-reusable (XXX: can we do this just always?) */
+  struct in6_addr nsrc = dst->sin6_addr;
+  if (IN6_IS_ADDR_LINKLOCAL(&nsrc))
+    if (determine_local_address(&s->address, &nsrc))
+      {
+        DEBUG("no route found to generate source address");
+        return;
+      }
+
+  h->int_address = nsrc;
   struct sockaddr_in6 sin6;
-  sockaddr_in6_set(&sin6, &dst->sin6_addr, 0); /* port ignored in send */
+  sockaddr_in6_set(&sin6, &nsrc, 0); /* port ignored in send */
   pcp_proxy_send_to_server(&sin6, &s->address,
                            data, data_len,
                            tpop, tpop_len);
