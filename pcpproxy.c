@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Mon Jun  2 19:26:44 2014 mstenber
- * Edit time:     131 min
+ * Last modified: Tue Sep  2 12:31:38 2014 mstenber
+ * Edit time:     155 min
  *
  */
 
@@ -304,29 +304,48 @@ static pcp_proxy_server determine_server_for_source(struct in6_addr *src)
   return NULL;
 }
 
+#define for_each_pcp_option(o, data, data_len)          \
+for (o = data ;                                         \
+     ((void *)o + sizeof(*o)) <= (data + data_len)      \
+       && ((void *)o + sizeof(*o) + htons(o->len))      \
+           <= (data + data_len) ;                       \
+     o = o + sizeof(*o) + ntohs(o->len))
+
+static pcp_option_s tpo_header = {
+  .option_code = PCP_OPTION_THIRD_PARTY,
+  .reserved = 0,
+  .len = ntohs(16)
+};
+
 pcp_thirdparty_option find_third_party_option(void *data, int data_len)
 {
   pcp_common_header ch = data;
-  void *data_end = data + data_len;
   int opcode = ch->opcode & ~PCP_OPCODE_RESPONSE;
   void *ptr = data +
     (opcode == PCP_OPCODE_MAP ? sizeof(pcp_map_header_s) :
      sizeof(pcp_peer_header_s));
-  pcp_thirdparty_option tpo;
-  pcp_option_s po = {
-    .option_code = PCP_OPTION_THIRD_PARTY,
-    .reserved = 0,
-    .len = ntohs(16)
-  };
-  while (ptr + sizeof(*tpo) <= data_end)
-    {
-      tpo = ptr;
-      if (memcmp(&tpo->po, &po, sizeof(po)) == 0)
-        return tpo;
-      /* Move to next option */
-      ptr = ptr + ntohs(tpo->po.len) + 4;
-    }
+  pcp_option o;
+  for_each_pcp_option(o, ptr, data_len - (ptr - data))
+    if (memcmp(o, &tpo_header, sizeof(tpo_header)) == 0)
+      return (pcp_thirdparty_option)o;
   return NULL;
+}
+
+void send_error(struct sockaddr_in6 *src, struct sockaddr_in6 *dst,
+                int rc, void *data, int data_len)
+{
+  pcp_common_header h = (pcp_common_header) data;
+
+  /* Modify the payload according to RFC6887 section 8.2 */
+  if (data_len > 1100)
+    data_len = 1100;
+  h->opcode |= PCP_OPCODE_RESPONSE;
+  h->result_code = rc;
+  h->lifetime = htonl(30 * 60); /* Recommended long lifetime */
+  h->reserved = 0;
+  memset(&h->int_address, 0, sizeof(h->int_address));
+  *((uint32_t *)&h->int_address) = htonl(get_time() - our_epoch);
+  pcp_proxy_send_to_client(dst, src, data, data_len);
 }
 
 void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
@@ -340,25 +359,39 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
   if (data_len < (int)sizeof(*h))
     {
       DEBUG("too short input from client (%d<%d)", data_len, (int)sizeof(*h));
+      /* XXX - what to respond? clearly broken client */
       return;
     }
   if (memcmp(&src->sin6_addr, &h->int_address, sizeof(src->sin6_addr)))
     {
       DEBUG("source address and internal address mismatch: %s<>%s",
             SOCKADDR_IN6_REPR(src), IN6_ADDR_REPR(&h->int_address));
+      send_error(src, dst, PCP_RC_ADDRESS_MISMATCH, data, data_len);
       return;
     }
   if (h->version != PCP_VERSION_RFC)
     {
       DEBUG("wrong PCP version:%d", h->version);
+      send_error(src, dst, PCP_RC_UNSUPP_VERSION, data, data_len);
       return;
     }
   switch (h->opcode)
     {
     case PCP_OPCODE_ANNOUNCE:
-      /* XXX - handle client-originated ANNOUNCE locally */
-      return;
-      break;
+      /* Check that there are no mandatory-to-understand options */
+      {
+        pcp_option o;
+        for_each_pcp_option(o, data + sizeof(*h), data_len - sizeof(*h))
+          {
+            if (o->option_code < PCP_OPTION_MANDATORY_BELOW)
+              {
+                send_error(src, dst, PCP_RC_UNSUPP_OPTION, data, data_len);
+                return;
+              }
+          }
+        send_error(src, dst, PCP_RC_SUCCESS, data, data_len);
+        return;
+      }
     case PCP_OPCODE_PEER:
     case PCP_OPCODE_MAP:
       if (data_len < (int)(sizeof(*h) + PCP_NONCE_LENGTH))
@@ -369,6 +402,7 @@ void pcp_proxy_handle_from_client(struct sockaddr_in6 *src,
       break;
     default:
       DEBUG("unknown opcode:%d", h->opcode);
+      send_error(src, dst, PCP_RC_UNSUPP_OPCODE, data, data_len);
       return;
     }
 

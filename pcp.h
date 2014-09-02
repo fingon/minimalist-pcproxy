@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 17:22:26 2014 mstenber
- * Last modified: Mon May 19 13:03:38 2014 mstenber
- * Edit time:     9 min
+ * Last modified: Tue Sep  2 12:30:05 2014 mstenber
+ * Edit time:     10 min
  *
  */
 
@@ -34,10 +34,18 @@
 #define PCP_OPCODE_PEER 2
 #define PCP_OPCODE_RESPONSE 128
 
+#define PCP_RC_SUCCESS 0
+#define PCP_RC_UNSUPP_VERSION 1
+#define PCP_RC_UNSUPP_OPCODE 4
+#define PCP_RC_UNSUPP_OPTION 5
+#define PCP_RC_ADDRESS_MISMATCH 12
+
+
 typedef struct __packed {
   uint8_t version;
   uint8_t opcode;
-  uint16_t reserved;
+  uint8_t reserved;
+  uint8_t result_code;
   uint32_t lifetime;
   struct in6_addr int_address;
 } pcp_common_header_s, *pcp_common_header;
@@ -49,6 +57,7 @@ typedef struct __packed {
 } pcp_option_s, *pcp_option;
 
 #define PCP_OPTION_THIRD_PARTY 1
+#define PCP_OPTION_MANDATORY_BELOW 128
 
 typedef struct __packed {
   pcp_option_s po;
