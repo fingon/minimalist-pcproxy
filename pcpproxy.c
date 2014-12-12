@@ -6,8 +6,8 @@
  * Copyright (c) 2014 cisco Systems, Inc.
  *
  * Created:       Mon May  5 18:37:03 2014 mstenber
- * Last modified: Tue Sep  2 12:31:38 2014 mstenber
- * Edit time:     155 min
+ * Last modified: Tue Sep  2 12:50:24 2014 mstenber
+ * Edit time:     156 min
  *
  */
 
@@ -311,12 +311,6 @@ for (o = data ;                                         \
            <= (data + data_len) ;                       \
      o = o + sizeof(*o) + ntohs(o->len))
 
-static pcp_option_s tpo_header = {
-  .option_code = PCP_OPTION_THIRD_PARTY,
-  .reserved = 0,
-  .len = ntohs(16)
-};
-
 pcp_thirdparty_option find_third_party_option(void *data, int data_len)
 {
   pcp_common_header ch = data;
@@ -325,6 +319,12 @@ pcp_thirdparty_option find_third_party_option(void *data, int data_len)
     (opcode == PCP_OPCODE_MAP ? sizeof(pcp_map_header_s) :
      sizeof(pcp_peer_header_s));
   pcp_option o;
+  pcp_option_s tpo_header = {
+    .option_code = PCP_OPTION_THIRD_PARTY,
+    .reserved = 0,
+    .len = ntohs(16)
+  };
+
   for_each_pcp_option(o, ptr, data_len - (ptr - data))
     if (memcmp(o, &tpo_header, sizeof(tpo_header)) == 0)
       return (pcp_thirdparty_option)o;
