@@ -30,7 +30,6 @@ Usage
 -----
 
 	cmake .
-	./minimalist-pcproxy eth0 eth1 2000:db8::/32=2000:db8::1 ::ffff:0:0/96=2000:db8::2
+	./minimalist-pcproxy 2000:db8::/32=2000:db8::1 ::ffff:0:0/96=2000:db8::2
 
-The command line arguments may be either interfaces, or (address prefix) =
-(PCP server) mappings.
+The command line arguments are (address prefix) = (PCP server) mappings.
